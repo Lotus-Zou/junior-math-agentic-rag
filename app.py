@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import unicodedata
 import uuid
@@ -31,7 +32,7 @@ from agentic_rag.tracing import append_bad_case, persist_trace
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.executor import SkillExecutor
 from agentic_rag.skill_runtime.registry import get_default_registry
-from config import RUN_TIMEOUT_SECONDS
+from config import CHROMA_PATH, OPENAI_API_KEY, RUN_TIMEOUT_SECONDS
 
 STATIC_DIR = Path(__file__).with_name("static")
 _graph = None
@@ -40,6 +41,7 @@ _graph_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="math-age
 _feedback_lock = Lock()
 _skill_registry = get_default_registry()
 _skill_executor = SkillExecutor(_skill_registry)
+logger = logging.getLogger(__name__)
 _PUBLIC_RESPONSE_TYPES = {
     "verified_answer",
     "guided_exercise",
@@ -152,37 +154,54 @@ def _record_failure(trace_id: str, query: str, category: str, issues: list[str],
             {"node": category, "kind": "failed", "at": time.time(), "latency_ms": round((time.time() - started) * 1000, 2), "payload": {"issues": issues}},
         ],
     }
-    persist_trace(state)
-    observe_state(state, time.time() - started)
+    for diagnostic in (
+        lambda: persist_trace(state),
+        lambda: observe_state(state, time.time() - started),
+    ):
+        try:
+            diagnostic()
+        except Exception:
+            logger.exception("failure diagnostics could not be recorded")
 
 
 class ContractViolation(ValueError):
     pass
 
-
-def _validation_evidence(payload: dict[str, Any]) -> dict[str, Any] | None:
-    for candidate in (payload.get("_validation_evidence"), payload.get("validation_evidence")):
-        if (
-            isinstance(candidate, dict)
-            and candidate.get("kind") in {"deterministic", "independent_critic"}
-            and candidate.get("passed") is True
-        ):
-            return {"kind": candidate["kind"], "passed": True}
-    critic = payload.get("critic_report")
+def _validated_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(contract, dict):
+        return {}
+    candidate = contract.get("validation_evidence")
     if (
-        isinstance(critic, dict)
-        and payload.get("validation_passed") is True
-        and critic.get("is_valid") is True
+        not isinstance(candidate, dict)
+        or candidate.get("kind") not in {"deterministic", "independent_critic"}
+        or candidate.get("passed") is not True
     ):
-        return {
-            "kind": "deterministic" if str(critic.get("validation_mode", "")).startswith("local_") else "independent_critic",
-            "passed": True,
+        return {}
+    return {
+        "validation_evidence": {"kind": candidate["kind"], "passed": True},
+        "exercise_answer_hidden": contract.get("exercise_answer_hidden") is True,
+    }
+
+
+def _skill_contract(payload: dict[str, Any]) -> dict[str, Any]:
+    return _validated_contract(
+        {
+            "validation_evidence": payload.get("_validation_evidence"),
+            "exercise_answer_hidden": payload.get("_exercise_answer_hidden"),
         }
-    return None
+    )
 
 
-def _exercise_answer_hidden(payload: dict[str, Any]) -> bool:
-    return payload.get("_exercise_answer_hidden") is True
+def _graph_contract(state: dict[str, Any]) -> dict[str, Any]:
+    critic = state.get("critic_report")
+    if (
+        not isinstance(critic, dict)
+        or state.get("validation_passed") is not True
+        or critic.get("is_valid") is not True
+    ):
+        return {}
+    kind = "deterministic" if str(critic.get("validation_mode", "")).startswith("local_") else "independent_critic"
+    return _validated_contract({"validation_evidence": {"kind": kind, "passed": True}})
 
 
 def _clarification_for(request: AskRequest, trace_id: str | None = None) -> dict[str, Any]:
@@ -203,14 +222,25 @@ def _clarification_for(request: AskRequest, trace_id: str | None = None) -> dict
     return response
 
 
-def _public_response(payload: dict[str, Any], request: AskRequest) -> dict[str, Any]:
+def _public_response(
+    payload: dict[str, Any], request: AskRequest, *, contract: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Re-run the response contract before publishing any producer or cache output."""
     response_type = payload.get("response_type")
     if response_type is not None and response_type not in _PUBLIC_RESPONSE_TYPES:
         raise ContractViolation("unsupported response type")
     normalized_payload = dict(payload)
-    evidence = _validation_evidence(normalized_payload)
-    hidden = _exercise_answer_hidden(normalized_payload)
+    for field in (
+        "validation_evidence",
+        "_validation_evidence",
+        "exercise_answer_hidden",
+        "_exercise_answer_hidden",
+        "critic_report",
+    ):
+        normalized_payload.pop(field, None)
+    trusted_contract = _validated_contract(contract)
+    evidence = trusted_contract.get("validation_evidence")
+    hidden = trusted_contract.get("exercise_answer_hidden") is True
 
     if response_type in {"verified_answer", "guided_exercise"}:
         if evidence is None or (response_type == "guided_exercise" and not hidden):
@@ -244,12 +274,13 @@ def _public_response(payload: dict[str, Any], request: AskRequest) -> dict[str, 
     return _clarification_for(request, normalized_payload.get("trace_id"))
 
 
-def _cache_record(public_response: dict[str, Any], producer_payload: dict[str, Any]) -> dict[str, Any]:
-    evidence = _validation_evidence(producer_payload)
+def _cache_record(public_response: dict[str, Any], contract: dict[str, Any]) -> dict[str, Any]:
+    trusted_contract = _validated_contract(contract)
+    evidence = trusted_contract.get("validation_evidence")
     response_type = public_response.get("response_type")
     if response_type not in {"verified_answer", "guided_exercise"} or evidence is None:
         raise ContractViolation("cache record is missing validation evidence")
-    hidden = _exercise_answer_hidden(producer_payload)
+    hidden = trusted_contract.get("exercise_answer_hidden") is True
     if response_type == "guided_exercise" and not hidden:
         raise ContractViolation("cache record is missing hidden-answer signal")
     return {
@@ -268,14 +299,26 @@ def _cached_response(cached: Any, request: AskRequest) -> dict[str, Any]:
     contract = cached.get("contract")
     if not isinstance(public, dict) or not isinstance(contract, dict):
         raise ContractViolation("cache record is missing contract metadata")
-    return _public_response(
-        {
-            **public,
-            "_validation_evidence": contract.get("validation_evidence"),
-            "_exercise_answer_hidden": contract.get("exercise_answer_hidden"),
-        },
-        request,
-    )
+    sanitized_public = dict(public)
+    for field in (
+        "validation_evidence",
+        "_validation_evidence",
+        "exercise_answer_hidden",
+        "_exercise_answer_hidden",
+        "critic_report",
+    ):
+        sanitized_public.pop(field, None)
+    return _public_response(sanitized_public, request, contract=contract)
+
+
+def _readiness_checks() -> dict[str, bool]:
+    return {
+        "static_ui": (STATIC_DIR / "index.html").exists(),
+        "knowledge_source": Path("data/初中数学核心知识.md").exists(),
+        "vector_index": Path(CHROMA_PATH).exists(),
+        "model_configured": bool(OPENAI_API_KEY),
+        "local_curriculum": True,
+    }
 
 
 @app.get("/health")
@@ -285,7 +328,7 @@ def health():
 
 @app.get("/ready")
 def ready():
-    return {"status": "ready"}
+    return {"status": "ready" if all(_readiness_checks().values()) else "degraded"}
 
 @app.get("/", include_in_schema=False)
 def home():
@@ -299,15 +342,14 @@ def favicon():
 
 @app.post("/ask")
 async def ask(request: AskRequest):
-    request_started = time.time()
-    guard_issue = input_guardrail_violation(request.query)
-    if guard_issue:
-        trace_id = str(uuid.uuid4())
-        _record_failure(trace_id, request.query, "input_guardrail", [guard_issue], request_started)
-        raise HTTPException(status_code=400, detail="输入不符合数学教学系统的安全约束，请只提交题目、解题步骤或相关追问。")
-
     started = time.time()
     try:
+        guard_issue = input_guardrail_violation(request.query)
+        if guard_issue:
+            trace_id = str(uuid.uuid4())
+            _record_failure(trace_id, request.query, "input_guardrail", [guard_issue], started)
+            raise HTTPException(status_code=400, detail="输入不符合数学教学系统的安全约束，请只提交题目、解题步骤或相关追问。")
+
         cache_payload = request.model_dump()
         cached = answer_cache.get(cache_payload)
         if cached is not None:
@@ -317,7 +359,8 @@ async def ask(request: AskRequest):
 
         fast_payload = _run_curriculum_skill(request)
         if fast_payload:
-            response = _public_response(fast_payload, request)
+            fast_contract = _skill_contract(fast_payload)
+            response = _public_response(fast_payload, request, contract=fast_contract)
             latency = time.time() - started
             response["metrics"]["latency_ms"] = round(latency * 1000, 2)
             trace_state = {
@@ -333,7 +376,7 @@ async def ask(request: AskRequest):
             persist_trace(trace_state)
             observe_state(trace_state, latency)
             if response["response_type"] in {"verified_answer", "guided_exercise"}:
-                answer_cache.set(cache_payload, _cache_record(response, fast_payload))
+                answer_cache.set(cache_payload, _cache_record(response, fast_contract))
             return response
 
         loop = asyncio.get_running_loop()
@@ -355,6 +398,7 @@ async def ask(request: AskRequest):
         )
         latency = time.time() - started
         observe_state(state, latency)
+        graph_contract = _graph_contract(state)
         raw_response = {
             "answer": state.get("response", ""),
             "trace_id": state.get("trace_id"),
@@ -362,19 +406,18 @@ async def ask(request: AskRequest):
             "knowledge_points": state.get("knowledge_points", []),
             "sources": _document_sources(state),
             "validation_passed": state.get("validation_passed", False),
-            "critic_report": state.get("critic_report", {}),
-            "_validation_evidence": _validation_evidence(state),
-            "_exercise_answer_hidden": _exercise_answer_hidden(state),
             "conversation_history": state.get("conversation_history", []),
             "conversation_summary": state.get("conversation_summary", ""),
             "metrics": state.get("metrics", {}),
             "cached": False,
         }
-        response = _public_response(raw_response, request)
+        response = _public_response(raw_response, request, contract=graph_contract)
         response["metrics"]["latency_ms"] = round(latency * 1000, 2)
         if response["response_type"] in {"verified_answer", "guided_exercise"}:
-            answer_cache.set(cache_payload, _cache_record(response, raw_response))
+            answer_cache.set(cache_payload, _cache_record(response, graph_contract))
         return response
+    except HTTPException:
+        raise
     except asyncio.TimeoutError:
         trace_id = str(uuid.uuid4())
         _record_failure(trace_id, request.query, "timeout", ["timeout"], started)

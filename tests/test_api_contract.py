@@ -190,3 +190,69 @@ def test_health_and_ready_are_minimal_public_statuses(client):
     public_text = f"{health} {ready}".lower()
     for internal in ("timeout", "agent", "vector", "model", "configured", "index"):
         assert internal not in public_text
+
+
+def test_public_cache_evidence_cannot_replace_contract_evidence(client, monkeypatch):
+    monkeypatch.setattr(
+        api.answer_cache,
+        "get",
+        lambda _payload: {
+            "public": {
+                "response_type": "verified_answer",
+                "answer": "x = 4",
+                "validation_passed": True,
+                "validation_evidence": {"kind": "deterministic", "passed": True},
+            },
+            "contract": {},
+        },
+    )
+
+    response = client.post("/ask", json={"query": "缓存注入", "language": "zh"})
+
+    assert response.status_code == 200
+    assert response.json()["response_type"] == "clarification_required"
+    assert "validation_evidence" not in response.json()
+
+
+def test_public_skill_evidence_cannot_replace_private_contract(client, monkeypatch):
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: None)
+    monkeypatch.setattr(
+        api,
+        "_run_curriculum_skill",
+        lambda _request: {
+            "response_type": "verified_answer",
+            "answer": "x = 4",
+            "validation_passed": True,
+            "validation_evidence": {"kind": "deterministic", "passed": True},
+        },
+    )
+
+    response = client.post("/ask", json={"query": "技能注入", "language": "zh"})
+
+    assert response.status_code == 200
+    assert response.json()["response_type"] == "clarification_required"
+    assert not (INTERNAL_FIELDS & response.json().keys())
+
+
+def test_diagnostic_failures_do_not_break_fail_closed_response(client, monkeypatch):
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: {"invalid": "cache"})
+    monkeypatch.setattr(api, "persist_trace", lambda _state: (_ for _ in ()).throw(OSError("trace store unavailable")))
+    monkeypatch.setattr(api, "observe_state", lambda *_args: (_ for _ in ()).throw(RuntimeError("metrics unavailable")))
+
+    response = client.post("/ask", json={"query": "诊断故障", "language": "zh"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["response_type"] == "clarification_required"
+    public_text = payload["answer"].lower()
+    for internal in ("traceback", "oserror", "runtimeerror", "timeout", "model error"):
+        assert internal not in public_text
+
+
+def test_ready_reports_degraded_without_leaking_dependency_details(client, monkeypatch):
+    monkeypatch.setattr(api, "_readiness_checks", lambda: {"static_ui": False})
+
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "degraded"}
