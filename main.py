@@ -1,89 +1,64 @@
 # -*- coding: utf-8 -*-
-"""
-@desc: Agentic RAG系统主入口（已集成记忆管理指令）
-"""
+"""CLI entry point for the junior-high mathematics mistake tutor."""
 
-import uuid
-from agentic_rag.graph import build_graph
+import sys
+
 from agentic_rag import memory
+from agentic_rag.graph import build_graph
 
-# 线程ID，用于LangGraph的持久化，这里我们用一个简单的UUID
-thread_id = str(uuid.uuid4())
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
-config = {"configurable": {"thread_id": thread_id}}
 
 def handle_memory_commands(query: str) -> bool:
-    """处理用户输入的记忆管理指令，如果处理了指令则返回True。"""
-    if query.strip() == '!show_memories':
-        print("--- 当前的长期记忆 (最近10条) ---")
-        mems = memory.view_memories(limit=10)
-        if not mems:
-            print("记忆库为空。")
-        else:
-            for i, mem in enumerate(mems):
-                print(f"{i+1}. [ID: {mem['id']}, 类型: {mem['type']}, 重要性: {mem['importance']}] - {mem['text']}")
+    if query.strip() == "!show_memories":
+        memories = memory.view_memories(limit=10)
+        if not memories:
+            print("暂无学习记录。")
+        for item in memories:
+            print(f"[ID {item['id']}] {item['type']}: {item['text']}")
         return True
-
-    elif query.startswith('!forget'):
-        topic = query.replace('!forget', '').strip()
+    if query.startswith("!forget"):
+        topic = query.removeprefix("!forget").strip()
         if not topic:
-            print("用法错误: 请提供要忘记的主题。例如: !forget 我的项目ID")
+            print("用法: !forget 要删除的知识点或错因")
             return True
-        
-        print(f"--- 查找与 '{topic}' 相关的记忆 ---")
-        retrieved_mems = memory.retrieve_memories(topic, top_k=5)
-        if not retrieved_mems:
-            print("未找到相关记忆。")
-            return True
-
-        print("找到以下相关记忆：")
-        for i, mem in enumerate(retrieved_mems):
-            print(f"{i+1}. [ID: {mem['id']}] - {mem['text']}")
-        
-        confirm = input("您确定要删除以上所有记忆吗? (y/n): ")
-        if confirm.lower() == 'y':
-            for mem in retrieved_mems:
-                memory.delete_memory(mem['id'])
-            print("相关记忆已删除。")
-        else:
-            print("操作已取消。")
+        candidates = memory.retrieve_memories(topic, top_k=5)
+        for item in candidates:
+            memory.delete_memory(item["id"])
+        print(f"已删除 {len(candidates)} 条相关学习记录。")
         return True
-        
     return False
 
+
 def main():
-    """主函数，运行Agentic RAG流程。"""
-    # 在启动时确保记忆库已初始化
     memory.initialize_memory_db()
-    
     graph = build_graph()
-
-    print("欢迎使用Agentic RAG系统！")
-    print("  - 输入问题与Agent对话。  ")
-    print("  - 输入 '!show_memories' 查看记忆。  ")
-    print("  - 输入 '!forget [主题]' 删除记忆。  ")
-    print("  - 输入 'exit' 退出程序。  ")
-    
+    conversation_history = []
+    print("初中数学错题智能问答系统")
+    print("输入完整题目开始订正；输入 !new 开始新对话，输入 exit 退出。")
     while True:
-        query = input("\n请输入您的问题或指令: ")
-        if query.lower() == 'exit':
+        query = input("\n题目或追问: ").strip()
+        if query.lower() == "exit":
             break
-        if not query.strip():
+        if not query:
             continue
-
-        # 优先处理记忆管理指令
+        if query == "!new":
+            conversation_history = []
+            print("已开始新对话。")
+            continue
         if handle_memory_commands(query):
             continue
-        
-        # 如果不是指令，则正常执行Agent工作流
-        inputs = {"query": query}
-        print("\n--- 系统开始处理 ---")
-        graph_config = {"recursion_limit": 10, **config}
-        final_state = graph.invoke(inputs, config=graph_config)
-        print("--- 系统处理结束 ---")
+        final_state = graph.invoke({"query": query, "conversation_history": conversation_history, "correction_attempts": 0, "validation_issues": []}, config={"recursion_limit": 40})
+        conversation_history = final_state.get("conversation_history", conversation_history)
+        print("\n" + final_state.get("response", "系统未生成答案。"))
+        if final_state.get("chapter"):
+            print(f"\n[知识点] {final_state['chapter']} / {'、'.join(final_state.get('knowledge_points', []))}")
+        if final_state.get("retrieval_trace"):
+            print(f"[检索] {final_state['retrieval_trace']}")
+        if final_state.get("validation_passed"):
+            print("[验证] 通过")
 
-        print("\n最终答案:")
-        print(final_state["response"])
 
 if __name__ == "__main__":
     main()

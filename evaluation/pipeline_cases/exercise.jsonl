@@ -1,0 +1,1 @@
+{"id":"geometry-exercise","pipeline":"correction.yaml","input":{"query":"出一个几何体我做做","language":"zh"},"expected_node":"response_render","answer_contains":"几何练习"}

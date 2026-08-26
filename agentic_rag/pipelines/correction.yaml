@@ -1,0 +1,24 @@
+id: math.correction
+version: 1.0.0
+sla_ms: 8000
+entry: input_guard
+nodes:
+  input_guard: {skill: math.input_guard@1, next: question_parse}
+  question_parse: {skill: math.question_parse@1, next: knowledge_classify}
+  knowledge_classify: {skill: math.knowledge_classify@1, next: curriculum_solve}
+  curriculum_solve: {skill: math.curriculum_solve@1, next: route}
+  route:
+    type: router
+    branches: {deterministic: response_render, rag: query_rewrite, clarify: response_render}
+  query_rewrite: {skill: math.query_rewrite@1, next: retrieval_parallel}
+  retrieval_parallel:
+    type: parallel
+    skills: [math.retrieve_dense@1, math.retrieve_bm25@1, math.retrieve_graph@1]
+    next: rrf_fusion
+  rrf_fusion: {skill: math.rrf_fusion@1, next: rerank_filter}
+  rerank_filter: {skill: math.rerank_filter@1, next: answer_generate}
+  answer_generate: {skill: math.answer_generate@1, next: answer_critic}
+  answer_critic:
+    skill: math.answer_critic@1
+    "on": {pass: response_render, fail: response_render}
+  response_render: {skill: math.response_render@1, next: END}

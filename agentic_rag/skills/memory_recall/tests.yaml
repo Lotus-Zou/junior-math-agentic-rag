@@ -1,0 +1,7 @@
+cases:
+  - id: manifest_loads
+    kind: contract
+    expected_status: OK
+  - id: invalid_extra_field
+    kind: adversarial
+    expected_status: FATAL_ERROR

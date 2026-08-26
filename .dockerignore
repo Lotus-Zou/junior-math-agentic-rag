@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+traces
+chroma_db
+long_term_memory.sqlite
+.codex-*

@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-08-26",
+  "product_sla": {
+    "deterministic_p95_ms": 100,
+    "agent_timeout_seconds": 8,
+    "frontend_timeout_seconds": 12
+  },
+  "cases": [
+    {"id": "PERF-001", "category": "performance", "title": "一次函数基础题运行超过 150 秒", "status": "resolved", "control": "课程确定性求解器", "test": "test_reported_linear_function_timeout_case_is_local_and_correct"},
+    {"id": "PERF-002", "category": "performance", "title": "多 Agent 重试导致延迟级联放大", "status": "resolved", "control": "8 秒全局 SLA、5 秒模型超时、零 SDK 重试、4 个有界工作线程", "test": "runtime configuration"},
+    {"id": "PERF-003", "category": "performance", "title": "前端等待时间长于可接受交互时间", "status": "resolved", "control": "前端 12 秒熔断并显示明确降级", "test": "static syntax and API timeout contract"},
+    {"id": "ROUTE-001", "category": "routing", "title": "类似题被上一题答案 Critic 误判", "status": "resolved", "control": "similar_exercise 独立意图与模板校验", "test": "test_similar_exercise_fast_path_hides_answer_and_skips_critic"},
+    {"id": "ROUTE-002", "category": "routing", "title": "主动生成几何题被错误送入知识库检索", "status": "resolved", "control": "geometry_exercise 独立意图", "test": "test_geometry_exercise_request_is_fast_and_does_not_retrieve"},
+    {"id": "ROUTE-003", "category": "routing", "title": "七至九年级高频模板题不必要地调用 LLM", "status": "resolved", "control": "十类严格课程求解器", "test": "test_all_1000_labeled_cases_avoid_external_models_with_latency_budget"},
+    {"id": "ROUTE-004", "category": "routing", "title": "前端全等条件示例未命中确定性路径并触发 8 秒超时", "status": "resolved", "control": "全等条件知识题严格本地 Solver，覆盖 SAS 与 SSS 两种充分条件", "test": "test_congruence_missing_condition_example_is_local_and_correct"},
+    {"id": "ROUTE-005", "category": "routing", "title": "换个问题被误送入复杂推理链路并触发 8 秒超时", "status": "resolved", "control": "会话控制意图最高优先级本地路由，同时清空上一题历史和摘要", "test": "test_switch_question_control_is_local_and_clears_old_problem"},
+    {"id": "STATE-001", "category": "conversation", "title": "生成几何题后无法继续提示或核对答案", "status": "resolved", "control": "从会话历史恢复本地题目上下文", "test": "test_generated_geometry_exercise_keeps_context_for_answer_check"},
+    {"id": "STATE-002", "category": "conversation", "title": "历史角色伪造、单条过长或总量失控", "status": "resolved", "control": "角色白名单与 24 条/32K 字符限制", "test": "test_history_schema_rejects_role_size_and_total_abuse"},
+    {"id": "VALID-001", "category": "validation", "title": "Critic 使用上一题期望答案校验新题", "status": "resolved", "control": "练习生成与答案校验状态隔离", "test": "similar exercise regression"},
+    {"id": "VALID-002", "category": "validation", "title": "不存在的引用编号或无引用回答进入结果", "status": "resolved", "control": "确定性引用范围校验", "test": "deterministic_math_checks tests"},
+    {"id": "VALID-003", "category": "validation", "title": "复杂开放题缺少依据时模型猜答案", "status": "mitigated", "control": "独立 Critic、无证据拒答和 bad-case 记录", "residual": "仍依赖教材覆盖率与外部模型质量"},
+    {"id": "INPUT-001", "category": "security", "title": "提示词提取和指令覆盖攻击", "status": "resolved", "control": "输入注入标记拦截与工具白名单", "test": "test_prompt_extraction_and_control_char_inputs_are_blocked"},
+    {"id": "INPUT-002", "category": "security", "title": "控制字符和异常 Unicode 输入", "status": "resolved", "control": "NFKC 规范化与控制字符拒绝", "test": "test_prompt_extraction_and_control_char_inputs_are_blocked"},
+    {"id": "SEC-001", "category": "security", "title": "API 将上游异常细节直接返回用户", "status": "resolved", "control": "仅返回错误编号，内部只记录异常类型", "test": "API error contract"},
+    {"id": "SEC-002", "category": "security", "title": "真实 API Key 曾出现在对话中", "status": "operational_action_required", "control": "代码和示例不保存密钥", "residual": "必须在供应商控制台轮换已暴露密钥"},
+    {"id": "OUTPUT-001", "category": "rendering", "title": "LaTeX 定界符显示为方括号或乱码", "status": "resolved", "control": "纯文本数学输出与前端公式规范化", "test": "frontend renderer and syntax checks"},
+    {"id": "OUTPUT-002", "category": "rendering", "title": "模型输出 HTML 或脚本造成页面注入", "status": "resolved", "control": "DOM textContent 渲染，不使用模型 innerHTML", "test": "frontend code review"},
+    {"id": "OBS-001", "category": "observability", "title": "本地快速回答没有 Trace 和指标", "status": "resolved", "control": "deterministic_router Trace 与统一 Prometheus 观测", "test": "API trace integration"},
+    {"id": "OBS-002", "category": "observability", "title": "用户负反馈未进入 bad-case 池", "status": "resolved", "control": "negative_feedback 自动追加分类记录", "test": "feedback integration"},
+    {"id": "EVAL-001", "category": "evaluation", "title": "独立门禁脚本直接执行时无法导入项目包", "status": "resolved", "control": "脚本按自身位置注入项目根目录", "test": "python evaluation/bad_case_harness.py --report"},
+    {"id": "OPS-001", "category": "reliability", "title": "阻塞模型线程无限增长导致服务耗尽", "status": "mitigated", "control": "4 线程有界执行器与 8 秒请求熔断", "residual": "Python 线程不能强杀已进入 SDK 的阻塞调用"},
+    {"id": "DATA-001", "category": "evaluation", "title": "1000 条数据由十类模板扩展，分布不够真实", "status": "open", "control": "保留分层基准并新增真实 bad-case 注册表", "residual": "需持续引入脱敏真实学生错题和图形题"},
+    {"id": "GEO-001", "category": "multimodal", "title": "图片题、手写公式和复杂几何图尚不能可靠解析", "status": "open", "control": "文本题明确追问缺失条件", "residual": "需要 OCR、公式识别、图元关系抽取和专项标注集"},
+    {"id": "PRIV-001", "category": "privacy", "title": "长期记忆缺少用户隔离、保留期和删除入口", "status": "open", "control": "当前仅建议单用户本地部署", "residual": "多用户上线前必须增加身份隔离、TTL、导出与删除能力"}
+  ]
+}

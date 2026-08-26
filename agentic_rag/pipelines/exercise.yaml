@@ -1,0 +1,6 @@
+id: math.exercise
+version: 1.0.0
+sla_ms: 3000
+entry: similar_exercise
+nodes:
+  similar_exercise: {skill: math.similar_exercise@1, next: END}

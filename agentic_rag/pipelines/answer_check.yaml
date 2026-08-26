@@ -1,0 +1,6 @@
+id: math.answer_check
+version: 1.0.0
+sla_ms: 3000
+entry: answer_check
+nodes:
+  answer_check: {skill: math.answer_check@1, next: END}

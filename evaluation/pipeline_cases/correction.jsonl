@@ -1,0 +1,4 @@
+{"id":"linear-equation","pipeline":"correction.yaml","input":{"query":"解方程 2x+3=11","language":"zh"},"expected_node":"response_render","answer_contains":"x = 4"}
+{"id":"linear-function","pipeline":"correction.yaml","input":{"query":"一次函数 y = -2x + 3 的斜率和截距分别是什么？图像大致怎么画？","language":"zh"},"expected_node":"response_render","answer_contains":"斜率 k = -2"}
+{"id":"congruence-missing-condition","pipeline":"correction.yaml","input":{"query":"在△ABC和△DEF中，已知AB=DE，AC=DF，还需要什么条件才能证明两个三角形全等？","language":"zh"},"expected_node":"response_render","answer_contains":"边角边（SAS）"}
+{"id":"switch-question-control","pipeline":"correction.yaml","input":{"query":"换个问题","language":"zh","conversation_history":[{"role":"student","content":"解方程 2x+3=11"}]},"expected_node":"response_render","answer_contains":"已切换到新问题"}

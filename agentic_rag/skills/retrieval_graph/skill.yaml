@@ -1,0 +1,17 @@
+id: math.retrieve_graph
+version: 1.0.0
+description: "Junior mathematics retrieve graph business capability with typed input and output."
+input_schema: agentic_rag.domain.schemas.RetrievalInput
+output_schema: agentic_rag.domain.schemas.RetrievalOutput
+handler: agentic_rag.skills.retrieval_graph.handler.handle
+timeout_ms: 1200
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [retrieval]
+dependencies: []
+policies: [junior_math_scope]
+evaluator: retrieval_graph_v1
+expose:
+  langchain: true
+  mcp: false

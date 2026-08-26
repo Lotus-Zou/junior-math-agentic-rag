@@ -1,0 +1,6 @@
+id: math.multimodal
+version: 0.1.0
+sla_ms: 8000
+entry: input_guard
+nodes:
+  input_guard: {skill: math.input_guard@1, next: END}

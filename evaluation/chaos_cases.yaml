@@ -1,0 +1,14 @@
+cases:
+  - id: expired-deadline
+    injection: context.deadline_at=past
+    expected_status: FATAL_ERROR
+  - id: malformed-mcp-payload
+    injection: extra-field
+    expected_status: FATAL_ERROR
+  - id: dense-index-unavailable
+    injection: retrieval-provider-error
+    expected_status: FATAL_ERROR
+    fallback: bm25-or-graph
+  - id: critic-rejects
+    injection: wrong-equation-answer
+    expected_branch: response_render

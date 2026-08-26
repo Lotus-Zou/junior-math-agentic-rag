@@ -1,0 +1,2 @@
+{"id":"critic-equation-valid","skill":"math.answer_critic@1","input":{"query":"解方程 2x+3=11","answer":"知识点定位\n解题思路\n分步过程：2x=8，所以 x=4。\n自检：2*4+3=11。","contexts":[]},"expected_status":"OK","expected":{"passed":true}}
+{"id":"critic-equation-wrong","skill":"math.answer_critic@1","input":{"query":"解方程 2x+3=11","answer":"分步过程：x=7","contexts":[]},"expected_status":"OK","expected":{"passed":false}}

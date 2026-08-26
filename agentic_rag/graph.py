@@ -1,128 +1,124 @@
 # -*- coding: utf-8 -*-
-"""
-@desc: 构建并编译Agentic RAG的工作流图
-"""
+"""Workflow + bounded ReAct hybrid for junior-high mathematics correction."""
 
-from langgraph.graph import StateGraph, END
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from agentic_rag.state import AgentState
+from langgraph.graph import END, StateGraph
+
 from agentic_rag.nodes import (
-    retrieve_memory_node,
+    classify_knowledge_node,
+    clarification_response_node,
     consolidate_memory_node,
-    route_query_node,
-    rewrite_query_node,
-    retrieve_documents_node, # new
-    grade_documents_node,    # new
     generate_response_node,
-    grade_relevance_node,
-    direct_response_node
+    no_evidence_response_node,
+    parse_question_node,
+    prepare_retry_node,
+    react_agent_node,
+    rerank_documents_node,
+    retrieve_documents_node,
+    retrieve_memory_node,
+    rewrite_query_node,
+    validate_answer_node,
+    validation_failure_response_node,
 )
+from agentic_rag.state import AgentState
+from config import MAX_CORRECTION_ATTEMPTS
+
+
+def build_skill_pipeline_graph():
+    """Build the versioned YAML pipeline during strangler migration."""
+    from agentic_rag.skill_runtime.adapters.langgraph import LangGraphPipelineAdapter
+    from agentic_rag.skill_runtime.contracts import SkillContext
+    from agentic_rag.skill_runtime.executor import SkillExecutor
+    from agentic_rag.skill_runtime.pipeline import PipelineLoader
+    from agentic_rag.skill_runtime.registry import get_default_registry
+
+    registry = get_default_registry()
+    manifest = PipelineLoader(registry).load(
+        Path(__file__).resolve().parent / "pipelines" / "correction.yaml"
+    )
+
+    def context_factory(state: dict) -> SkillContext:
+        deadline = float(state.get("deadline_at", 0))
+        if deadline:
+            deadline_at = datetime.fromtimestamp(deadline, tz=timezone.utc)
+        else:
+            deadline_at = datetime.now(timezone.utc) + timedelta(seconds=8)
+        return SkillContext(
+            request_id=str(state.get("trace_id", "request")),
+            trace_id=str(state.get("trace_id", "trace")),
+            session_id=str(state.get("session_id", "anonymous")),
+            language=str(state.get("response_language", "zh")),
+            deadline_at=deadline_at,
+        )
+
+    return LangGraphPipelineAdapter(SkillExecutor(registry)).compile(manifest, context_factory)
+
 
 def build_graph():
-    """构建并返回集成了“自省”能力的、包含内外双循环的LangGraph图。"""
     workflow = StateGraph(AgentState)
+    for name, node in {
+        "retrieve_memory": retrieve_memory_node,
+        "parse_question": parse_question_node,
+        "rewrite_query": rewrite_query_node,
+        "classify_knowledge": classify_knowledge_node,
+        "react_agent": react_agent_node,
+        "retrieve_documents": retrieve_documents_node,
+        "llm_rerank": rerank_documents_node,
+        "generate_response": generate_response_node,
+        "validate_answer": validate_answer_node,
+        "prepare_retry": prepare_retry_node,
+        "clarify": clarification_response_node,
+        "no_evidence": no_evidence_response_node,
+        "validation_failure": validation_failure_response_node,
+        "finalize": consolidate_memory_node,
+    }.items():
+        workflow.add_node(name, node)
 
-    # --- 添加所有节点 ---
-    # 记忆相关
-    workflow.add_node("retrieve_memory", retrieve_memory_node)
-    workflow.add_node("consolidate_memory", consolidate_memory_node)
-    # 核心流程
-    workflow.add_node("route_query", route_query_node)
-    workflow.add_node("rewrite_query", rewrite_query_node)
-    workflow.add_node("retrieve_documents", retrieve_documents_node)
-    workflow.add_node("grade_documents", grade_documents_node)
-    workflow.add_node("generate_response", generate_response_node)
-    workflow.add_node("direct_response", direct_response_node)
-    # 外部循环评估
-    workflow.add_node("grade_relevance", grade_relevance_node)
-
-    # --- 定义边 ---
-
-    # 1. 从“回忆”开始
     workflow.set_entry_point("retrieve_memory")
-    workflow.add_edge("retrieve_memory", "route_query")
-
-    # 2. “路由”后，对于需要检索的，先“重写查询”
+    workflow.add_edge("retrieve_memory", "parse_question")
+    workflow.add_edge("parse_question", "rewrite_query")
     workflow.add_conditional_edges(
-        "route_query",
-        lambda state: state["route"],
-        {
-            "web_search": "rewrite_query",
-            "hierarchical_search": "rewrite_query",
-            "direct_chunk_search": "rewrite_query",
-            "direct": "direct_response" # “直接回答”路由，跳过所有检索和生成
-        }
+        "rewrite_query",
+        lambda state: "clarify" if state.get("needs_clarification") else "classify",
+        {"clarify": "clarify", "classify": "classify_knowledge"},
     )
-    
-    # 3. “重写查询”后，开始“内循环”：检索->评估->决策
-    workflow.add_edge("rewrite_query", "retrieve_documents")
-    workflow.add_edge("retrieve_documents", "grade_documents")
-
-    # 4. “内循环”的核心决策
-    def decide_after_document_grading(state: AgentState):
-        """在评估文档后，决定是生成答案，还是切换策略重试。"""
-        if state.get("documents_are_relevant"):
-            print("---决策：文档相关，进入答案生成---")
-            return "generate"
-        
-        print("---决策：文档不相关，尝试切换策略---")
-        tried_routes = state.get("tried_routes", [])
-        available_routes = ['hierarchical_search', 'direct_chunk_search', 'web_search']
-        
-        for next_route in available_routes:
-            if next_route not in tried_routes:
-                print(f"---决策：切换到新策略 '{next_route}'---")
-                # 更新状态以驱动下一次循环
-                new_state = state.copy()
-                new_state['route'] = next_route
-                new_state['tried_routes'] = tried_routes + [next_route]
-                state.update(new_state)
-                return "retry_retrieve"
-        
-        print("---决策：所有检索策略均失败，无法找到相关文档---")
-        return "fallback"
-
     workflow.add_conditional_edges(
-        "grade_documents",
-        decide_after_document_grading,
-        {
-            "generate": "generate_response",
-            "retry_retrieve": "retrieve_documents", # 回到检索节点，形成循环
-            "fallback": END # 所有策略失败，结束流程
-        }
+        "classify_knowledge",
+        lambda state: "react" if state.get("intent") == "knowledge_query" else "workflow",
+        {"react": "react_agent", "workflow": "retrieve_documents"},
     )
+    workflow.add_edge("react_agent", "retrieve_documents")
+    workflow.add_conditional_edges(
+        "retrieve_documents",
+        lambda state: "rerank" if state.get("retrieval_candidates") else "no_evidence",
+        {"rerank": "llm_rerank", "no_evidence": "no_evidence"},
+    )
+    workflow.add_conditional_edges(
+        "llm_rerank",
+        lambda state: "validate" if state.get("documents") and state.get("draft_response") else "generate" if state.get("documents") else "no_evidence",
+        {"validate": "validate_answer", "generate": "generate_response", "no_evidence": "no_evidence"},
+    )
+    workflow.add_edge("generate_response", "validate_answer")
 
-    # 5. “外循环”：生成答案 -> 评估答案
-    workflow.add_edge("generate_response", "grade_relevance")
-    # “直接回答”也连接到最终评估
-    workflow.add_edge("direct_response", "grade_relevance")
-
-    # 6. “外循环”的决策
-    def decide_after_answer_grading(state: AgentState):
-        """在评估最终答案后，决定是结束还是重试。"""
-        if state["is_relevant"]:
-            print("---决策：答案相关，流程结束---")
-            return "end"
-        
-        if state.get("correction_attempts", 0) >= 2:
-            print("---决策：已达到最大重试次数，流程结束---")
-            return "end"
-        else:
-            print("---决策：答案不相关，触发修正性重写---")
+    def after_validation(state: AgentState) -> str:
+        if state.get("needs_clarification"):
+            return "clarify"
+        if state.get("validation_passed"):
+            return "accepted"
+        if state.get("correction_attempts", 0) < MAX_CORRECTION_ATTEMPTS:
             return "retry"
+        return "rejected"
 
     workflow.add_conditional_edges(
-        "grade_relevance",
-        decide_after_answer_grading,
-        {
-            "end": "consolidate_memory", # 答案相关或达到最大次数，去“复盘”并形成记忆
-            "retry": "rewrite_query"     # 答案不相关，重写查询
-        }
+        "validate_answer",
+        after_validation,
+        {"accepted": "finalize", "retry": "prepare_retry", "clarify": "clarify", "rejected": "validation_failure"},
     )
-    
-    # 7. “复盘记忆”后，流程结束
-    workflow.add_edge("consolidate_memory", END)
-
-    # 编译图
-    graph = workflow.compile()
-    return graph
+    workflow.add_edge("prepare_retry", "rewrite_query")
+    workflow.add_edge("clarify", "finalize")
+    workflow.add_edge("no_evidence", "finalize")
+    workflow.add_edge("validation_failure", "finalize")
+    workflow.add_edge("finalize", END)
+    return workflow.compile()

@@ -1,0 +1,14 @@
+{
+  "provenance": "user_provided_project_history",
+  "verified_in_current_workspace_run": false,
+  "timeline": "2025",
+  "metrics": {
+    "dense_to_hybrid_recall_lift": 0.15,
+    "hallucination_rate_before": 0.35,
+    "hallucination_rate_after": 0.10,
+    "answer_relevance_before": 0.50,
+    "answer_relevance_after": 0.78
+  },
+  "adoption": "导师采纳并用于校企合作教育项目",
+  "verification_command": "python evaluation/evaluation.py --mode e2e --limit 0 --version <version>"
+}

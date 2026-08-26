@@ -192,3 +192,11 @@ chroma_db/
 *.pdf
 
 workflow
+
+# Agent runtime and evaluation artifacts
+.worktrees/
+.superpowers/sdd/
+traces/
+evaluation/reports/
+evaluation/latest_summary.json
+evaluation/pending_labels.jsonl

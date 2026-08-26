@@ -1,0 +1,17 @@
+id: math.similar_exercise
+version: 1.0.0
+description: "Junior mathematics similar exercise business capability with typed input and output."
+input_schema: agentic_rag.domain.schemas.SimilarExerciseInput
+output_schema: agentic_rag.domain.schemas.SimilarExerciseOutput
+handler: agentic_rag.skills.similar_exercise.handler.handle
+timeout_ms: 1500
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [retrieval]
+dependencies: []
+policies: [junior_math_scope]
+evaluator: similar_exercise_v1
+expose:
+  langchain: true
+  mcp: true

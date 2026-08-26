@@ -1,0 +1,3 @@
+{"id":"curriculum-with-history","skill":"math.curriculum_solve@1","input":{"query":"再出一个类似的题","language":"zh","conversation_history":[{"role":"student","content":"解方程 2x+3=11"},{"role":"tutor","content":"x = 4"}]},"expected_status":"OK","expected":{"handled":true}}
+{"id":"curriculum-congruence-condition","skill":"math.curriculum_solve@1","input":{"query":"在△ABC和△DEF中，已知AB=DE，AC=DF，还需要什么条件才能证明两个三角形全等？","language":"zh"},"expected_status":"OK","expected":{"handled":true}}
+{"id":"conversation-switch-question","skill":"math.curriculum_solve@1","input":{"query":"换个问题","language":"zh","conversation_history":[{"role":"student","content":"解方程 2x+3=11"},{"role":"tutor","content":"x = 4"}]},"expected_status":"OK","expected":{"handled":true}}

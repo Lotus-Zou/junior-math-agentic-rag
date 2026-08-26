@@ -1,35 +1,51 @@
 # -*- coding: utf-8 -*-
-"""
-@desc: 定义Agentic RAG工作流的状态。
+"""Explicit LangGraph state for the controlled mathematics Agent runtime."""
 
-该状态在图的节点之间传递，并随着每个节点的执行而更新。
-"""
-from typing import List, TypedDict, Optional
+from typing import Any, Dict, List, Optional, TypedDict
 
-class AgentState(TypedDict):
-    """
-    Agentic RAG的状态表示
 
-    Attributes:
-        query (str): 用户的原始问题。
-        updated_query (str): 经过优化的查询。
-        documents (List[str]): 从知识源检索到的文档列表。
-        response (str): LLM生成的中间或最终答案。
-        route (str): 查询路由的结果（例如，'web_search', 'vectorstore', 'direct'）。
-        is_relevant (bool): 答案是否与查询相关。
-        error (Optional[str]): 工作流中发生的任何错误。
-        retrieved_memories (Optional[List[str]]): 从长期记忆库中检索到的相关记忆。
-        conversation_history (List): 存储当前对话的交互历史。
-    """
+class AgentState(TypedDict, total=False):
     query: str
+    response_language: str
+    stem: str
+    student_answer: str
+    intent: str
+    error_clues: List[str]
+    fast_path: bool
     updated_query: str
-    documents: List[str]
+    sub_queries: List[str]
+    query_facts: List[str]
+    missing_conditions: List[str]
+    chapter: str
+    grade: str
+    knowledge_points: List[str]
+    question_type: str
+
+    retrieval_candidates: List[Any]
+    documents: List[Any]
+    retrieval_trace: List[Dict[str, Any]]
+    rerank_report: Dict[str, Any]
+    graph_context: str
+
+    draft_response: str
     response: str
-    route: str
-    is_relevant: bool
-    error: Optional[str]
-    retrieved_memories: Optional[List[str]]
-    conversation_history: List
+    validation_passed: bool
+    validation_issues: List[str]
+    critic_report: Dict[str, Any]
+    needs_clarification: bool
+    follow_up_question: str
     correction_attempts: int
-    tried_routes: List[str]
-    documents_are_relevant: bool
+
+    working_memory: Dict[str, Any]
+    conversation_history: List[Dict[str, str]]
+    conversation_summary: str
+    retrieved_memories: str
+
+    trace_id: str
+    trace_events: List[Dict[str, Any]]
+    metrics: Dict[str, Any]
+    started_at: float
+    deadline_at: float
+    step_count: int
+    tool_calls: List[Dict[str, Any]]
+    error: Optional[str]

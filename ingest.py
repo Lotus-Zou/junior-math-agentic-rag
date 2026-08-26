@@ -1,211 +1,207 @@
 # -*- coding: utf-8 -*-
-"""
-@desc: 数据注入脚本（已升级为并行与批处理模式）
+"""Formula-aware ingestion for textbook, knowledge-point, mistake, and exercise data."""
 
-本脚本使用多进程并行处理文档，并通过批处理方式存入数据库，以提升注入效率。
-"""
+from __future__ import annotations
 
+import argparse
+import hashlib
+import json
 import os
-import shutil
-import multiprocessing
-from tqdm import tqdm
-import pandas as pd
+import re
+from pathlib import Path
+
 import chromadb
+import pandas as pd
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredWordDocumentLoader
 from langchain_core.documents import Document
-from langchain_community.document_loaders import (
-    PyPDFLoader,
-    TextLoader,
-    UnstructuredWordDocumentLoader,
-    UnstructuredMarkdownLoader,
-)
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from tqdm import tqdm
 
-# 在加载其他模块前，先加载配置，确保环境变量等设置生效
-import config
-from agentic_rag.chains import get_embedding_function, get_summarizer_chain
-from config import EXCEL_METADATA_COLUMNS
+from agentic_rag.chains import get_embedding_function
+from agentic_rag.knowledge_graph import math_knowledge_graph
+from agentic_rag.math_retriever import CHUNK_COLLECTION_NAME
+from agentic_rag.math_taxonomy import adaptive_chunk_size, classify_math_text, extract_formulas, infer_prerequisites
+from config import CHROMA_PATH, EXCEL_METADATA_COLUMNS
 
-# --- 配置 ---
 DATA_PATH = "data"
-PERSIST_PATH = "chroma_db"
-SUMMARY_COLLECTION_NAME = "doc_summaries"
-CHUNK_COLLECTION_NAME = "doc_chunks"
+SUMMARY_COLLECTION_NAME = "math_summaries"
+BATCH_SIZE = 512
 
-# --- 工作函数：用于并行处理 ---
-def process_document_worker(doc):
-    """
-    对单个文档进行摘要生成和文本切分的工作函数。
-    注意：为了避免多进程中的序列化问题，此函数内部会自行初始化所需的链和分割器。
-    """
-    summarizer_chain = get_summarizer_chain()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    
-    doc_content = doc.page_content
-    doc_source = doc.metadata.get('source', 'unknown_source')
-    if 'row_index' in doc.metadata:
-        doc_source = f"{doc_source}_row_{doc.metadata['row_index']}"
 
-    try:
-        # 1. 根据数据类型智能生成摘要
-        doc_type = doc.metadata.get('data_type', 'narrative') # 默认为叙事型
-        summary = ""
-        if doc_type == 'narrative':
-            # 对叙事型文档，调用LLM生成摘要
-            summary = summarizer_chain.invoke({"document_content": doc_content}).content
-        elif doc_type == 'tabular':
-            # 对表格型数据，直接使用原文作为摘要，免除LLM调用
-            summary = doc_content
-        
-        summary_metadata = {"source": doc_source}
+def _stable_id(*parts: object) -> str:
+    return hashlib.sha1("::".join(str(part) for part in parts).encode("utf-8")).hexdigest()
 
-        # 2. 切分区块（对于表格行，通常只切分出它自身）
-        splits = text_splitter.split_documents([doc])
-        chunk_docs = [split.page_content for split in splits]
-        chunk_metadatas = [split.metadata for split in splits]
-        chunk_ids = [f"{doc_source}_chunk_{i}" for i in range(len(splits))]
 
-        return (doc_source, summary, summary_metadata, chunk_ids, chunk_docs, chunk_metadatas)
-    except Exception as e:
-        print(f"处理文档 {doc_source} 时出错: {e}")
-        return None
+def _clean_text(text: str) -> str:
+    text = (text or "").replace("\u00a0", " ").replace("\r\n", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
-# --- 主逻辑 ---
-def main():
-    """
-    主函数：执行并行化和批处理的数据注入流程。
-    """
-    print("---" + " 开始并行化数据注入流程" + " ---")
-    try:
-        import torch
-        print("\n--- GPU诊断信息 ---")
-        print(f"PyTorch version: {torch.__version__}")
-        print(f"CUDA available: {torch.cuda.is_available()}")
-        if torch.cuda.is_available():
-            print(f"CUDA version: {torch.version.cuda}")
-            print(f"GPU count: {torch.cuda.device_count()}")
-            print(f"GPU name: {torch.cuda.get_device_name(0)}")
-        else:
-            print("警告: PyTorch 未找到可用的 CUDA 设备。模型将运行在 CPU 上。")
-        print("--- GPU诊断结束 ---\n")
-    except ImportError:
-        print("\n警告: 未安装 PyTorch。无法进行 GPU 诊断。\n")
 
-    if os.path.exists(PERSIST_PATH):
-        print(f"正在删除旧的数据库 '{PERSIST_PATH}'...")
-        shutil.rmtree(PERSIST_PATH)
+def _is_math_document(document: Document) -> bool:
+    source = str(document.metadata.get("source", ""))
+    if "数学" in source or any(document.metadata.get(key) for key in ("章节", "知识点", "年级")):
+        return True
+    markers = (
+        "一元一次方程", "一元二次方程", "不等式", "因式分解", "分式方程",
+        "一次函数", "二次函数", "反比例函数", "全等三角形", "相似三角形",
+        "勾股定理", "圆周角", "等可能试验", "概率公式",
+    )
+    return sum(marker in document.page_content for marker in markers) >= 2
 
-    # 1. 加载所有文档
-    if not os.path.exists(DATA_PATH) or not os.listdir(DATA_PATH):
-        print(f"错误：数据目录 '{DATA_PATH}' 不存在或为空。")
-        return
-    documents = load_documents_from_directory(DATA_PATH)
-    if not documents:
-        print("未能成功加载任何文档。" )
-        return
-    print(f"\n成功加载 {len(documents)} 份原始文档/数据行。" )
 
-    # 2. 并行处理所有文档
-    all_summaries, all_summary_metadatas, all_summary_ids = [], [], []
-    all_chunks, all_chunk_metadatas, all_chunk_ids = [], [], []
-
-    # 创建进程池
-    num_processes = max(1, os.cpu_count() - 1) # 留一个核心给主进程
-    print(f"---" + " 使用 " + f"{num_processes}" + " 个进程并行处理文档" + " ---")
-    with multiprocessing.Pool(processes=num_processes) as pool:
-        # 使用imap_unordered来获取进度条
-        results = list(tqdm(pool.imap_unordered(process_document_worker, documents), total=len(documents), desc="摘要与切分"))
-
-    # 3. 收集处理结果
-    for result in results:
-        if result:
-            doc_source, summary, summary_metadata, chunk_ids, chunk_docs, chunk_metadatas = result
-            all_summary_ids.append(doc_source)
-            all_summaries.append(summary)
-            all_summary_metadatas.append(summary_metadata)
-            all_chunk_ids.extend(chunk_ids)
-            all_chunks.extend(chunk_docs)
-            all_chunk_metadatas.extend(chunk_metadatas)
-
-    if not all_summary_ids or not all_chunk_ids:
-        print("未能成功处理任何文档，注入中止。" )
-        return
-
-    # 4. 批量存入数据库（分批次）
-    print("--- 开始批量存入向量数据库 ---")
-    embedding_function = get_embedding_function()
-    client = chromadb.PersistentClient(path=PERSIST_PATH)
-    
-    # 定义一个合理的批次大小
-    CHROMA_BATCH_SIZE = 4096
-
-    # 批量存入摘要
-    summary_collection = client.get_or_create_collection(SUMMARY_COLLECTION_NAME, embedding_function=embedding_function)
-    total_summaries = len(all_summary_ids)
-    print(f"正在分批存入 {total_summaries} 条摘要...")
-    for i in tqdm(range(0, total_summaries, CHROMA_BATCH_SIZE), desc="存入摘要"):
-        end_i = min(i + CHROMA_BATCH_SIZE, total_summaries)
-        summary_collection.add(
-            ids=all_summary_ids[i:end_i],
-            documents=all_summaries[i:end_i],
-            metadatas=all_summary_metadatas[i:end_i]
-        )
-
-    # 批量存入区块
-    chunk_collection = client.get_or_create_collection(CHUNK_COLLECTION_NAME, embedding_function=embedding_function)
-    total_chunks = len(all_chunk_ids)
-    print(f"正在分批存入 {total_chunks} 个区块...")
-    for i in tqdm(range(0, total_chunks, CHROMA_BATCH_SIZE), desc="存入区块"):
-        end_i = min(i + CHROMA_BATCH_SIZE, total_chunks)
-        chunk_collection.add(
-            ids=all_chunk_ids[i:end_i],
-            documents=all_chunks[i:end_i],
-            metadatas=all_chunk_metadatas[i:end_i]
-        )
-
-    print("\n--- 并行化数据注入完成 ---")
-    print(f"知识库已成功构建在 '{PERSIST_PATH}' 中。" )
-
-# --- 辅助函数定义 ---
-def load_documents_from_directory(directory_path):
-    """逐个加载目录中的文档。"""
-    # ... (此处省略与之前版本相同的完整代码)
-    documents = []
-    loader_map = {'.pdf': PyPDFLoader, '.txt': TextLoader, '.md': UnstructuredMarkdownLoader, '.docx': UnstructuredWordDocumentLoader, '.doc': UnstructuredWordDocumentLoader}
-    supported_files = []
-    for root, _, files in os.walk(directory_path):
-        for file in files:
-            ext = os.path.splitext(file)[1].lower()
-            if ext in loader_map or ext in ['.xlsx', '.xls']:
-                supported_files.append(os.path.join(root, file))
-
-    for file_path in tqdm(supported_files, desc="加载文档"):
-        ext = os.path.splitext(file_path)[1].lower()
+def load_documents_from_directory(directory_path: str) -> list[Document]:
+    loader_map = {
+        ".pdf": PyPDFLoader,
+        ".txt": TextLoader,
+        ".md": TextLoader,
+        ".docx": UnstructuredWordDocumentLoader,
+        ".doc": UnstructuredWordDocumentLoader,
+    }
+    documents: list[Document] = []
+    paths = [path for path in Path(directory_path).rglob("*") if path.is_file() and path.name != "knowledge_graph.json"]
+    for path in tqdm(paths, desc="加载数学资料"):
+        extension = path.suffix.lower()
         try:
-            if ext in ['.xlsx', '.xls']:
-                df = pd.read_excel(file_path)
-                for index, row in df.iterrows():
-                    content_parts = []
-                    metadata = {"source": file_path, "row_index": index, "data_type": "tabular"}
-                    for col_name in df.columns:
-                        value = row[col_name]
-                        value_str = str(value) if not pd.isna(value) else ""
-                        content_parts.append(f"{col_name}: {value_str}")
-                        if col_name in EXCEL_METADATA_COLUMNS:
-                            metadata[col_name] = value_str
-                    doc = Document(page_content="\n".join(content_parts), metadata=metadata)
-                    documents.append(doc)
-            elif ext in loader_map:
-                loader = loader_map[ext](file_path, encoding='utf-8') if ext == ".txt" else loader_map[ext](file_path)
-                loaded_docs = loader.load()
-                # 为叙事型文档打上标签
-                for doc in loaded_docs:
-                    doc.metadata["data_type"] = "narrative"
-                documents.extend(loaded_docs)
-        except Exception as e:
-            print(f"加载文件 {file_path} 失败: {e}")
-    return documents
+            if extension in (".xlsx", ".xls"):
+                frame = pd.read_excel(path)
+                for row_index, row in frame.iterrows():
+                    metadata = {"source": str(path), "row_index": int(row_index)}
+                    parts = []
+                    for column in frame.columns:
+                        value = "" if pd.isna(row[column]) else str(row[column])
+                        parts.append(f"{column}: {value}")
+                        if column in EXCEL_METADATA_COLUMNS:
+                            metadata[column] = value
+                    documents.append(Document(page_content=_clean_text("\n".join(parts)), metadata=metadata))
+            elif extension in loader_map:
+                loader = loader_map[extension](str(path), encoding="utf-8") if extension in (".txt", ".md") else loader_map[extension](str(path))
+                for document in loader.load():
+                    document.page_content = _clean_text(document.page_content)
+                    documents.append(document)
+        except Exception as exc:
+            print(f"跳过无法加载的文件 {path}: {exc}")
+    return [document for document in documents if document.page_content and _is_math_document(document)]
+
+
+def _protect_formulas(text: str) -> tuple[str, dict[str, str]]:
+    protected, replacements = text, {}
+    for index, formula in enumerate(extract_formulas(text)):
+        placeholder = f"FORMULA_TOKEN_{index}_END"
+        protected = protected.replace(formula, placeholder)
+        replacements[placeholder] = formula
+    return protected, replacements
+
+
+def _error_class(text: str) -> str:
+    if any(word in text for word in ("符号", "变号", "正负")):
+        return "符号错误"
+    if any(word in text for word in ("公式", "定理", "条件")):
+        return "公式条件误用"
+    if any(word in text for word in ("漏", "跳步", "对应")):
+        return "步骤遗漏"
+    return "计算或概念错误"
+
+
+def _llm_metadata(section: str) -> dict:
+    from agentic_rag.chains import get_metadata_extraction_chain
+
+    try:
+        return get_metadata_extraction_chain().invoke({"text": section})
+    except Exception as exc:
+        print(f"LLM 元数据抽取降级为规则: {exc}")
+        return {}
+
+
+def split_math_document(document: Document, use_llm_metadata: bool = False) -> list[Document]:
+    """Split headings, protect formulas, and attach complete retrieval metadata."""
+    sections = [section.strip() for section in re.split(r"(?m)(?=^##\s+)", document.page_content) if section.strip()]
+    chunks: list[Document] = []
+    for section_index, section in enumerate(sections):
+        classification = classify_math_text(f"{document.metadata.get('source', '')}\n{section}")
+        if classification.chapter == "综合" and len(section) < 100:
+            continue
+        formulas = extract_formulas(section)
+        prerequisites = infer_prerequisites(classification.knowledge_points)
+        enhanced = _llm_metadata(section) if use_llm_metadata else {}
+        formulas = list(dict.fromkeys([*formulas, *enhanced.get("formulas", [])]))
+        prerequisites = list(dict.fromkeys([*prerequisites, *enhanced.get("prerequisites", [])]))
+        chunk_size = adaptive_chunk_size(section)
+        protected, replacements = _protect_formulas(section)
+        splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+            encoding_name="cl100k_base",
+            chunk_size=chunk_size,
+            chunk_overlap=max(40, chunk_size // 6),
+            separators=["\n### ", "\n\n", "\n", "。", "；", "，", " "],
+        )
+        metadata = dict(document.metadata)
+        metadata.update({
+            "grade": enhanced.get("grade") or metadata.get("年级") or classification.grade,
+            "chapter": enhanced.get("chapter") or metadata.get("章节") or classification.chapter,
+            "knowledge_points": "、".join(enhanced.get("knowledge_points") or classification.knowledge_points),
+            "question_type": enhanced.get("question_type") or metadata.get("题型") or classification.question_type,
+            "error_class": enhanced.get("error_class") or metadata.get("错误分类") or _error_class(section),
+            "formula_ids": "、".join(f"F-{_stable_id(formula)[:10]}" for formula in formulas),
+            "formulas": json.dumps(formulas, ensure_ascii=False),
+            "prerequisites": "、".join(prerequisites),
+            "chunk_tokens": chunk_size,
+            "section_index": section_index,
+        })
+        protected_chunks = splitter.split_documents([Document(page_content=protected, metadata=metadata)])
+        for chunk in protected_chunks:
+            for placeholder, formula in replacements.items():
+                chunk.page_content = chunk.page_content.replace(placeholder, formula)
+            chunks.append(chunk)
+        missing_formulas = [formula for formula in formulas if formula in section and not any(formula in chunk.page_content for chunk in protected_chunks)]
+        if missing_formulas:
+            raise ValueError(f"公式在分块过程中丢失: {missing_formulas}")
+        for point in (enhanced.get("knowledge_points") or classification.knowledge_points):
+            math_knowledge_graph.add(point, prerequisites)
+    return chunks
+
+
+def _recreate_collection(client, name: str, embedding_function):
+    try:
+        client.delete_collection(name)
+    except Exception:
+        pass
+    return client.create_collection(name, embedding_function=embedding_function)
+
+
+def _add_batches(collection, ids, documents, metadatas):
+    for start in tqdm(range(0, len(ids), BATCH_SIZE), desc=f"写入 {collection.name}"):
+        end = start + BATCH_SIZE
+        collection.add(ids=ids[start:end], documents=documents[start:end], metadatas=metadatas[start:end])
+
+
+def main():
+    parser = argparse.ArgumentParser(description="构建初中数学多索引知识库")
+    parser.add_argument("--llm-metadata", action="store_true", help="调用 LLM 增强公式、知识点和依赖元数据")
+    args = parser.parse_args()
+    if not os.path.isdir(DATA_PATH):
+        raise FileNotFoundError(f"数据目录不存在: {DATA_PATH}")
+    source_documents = load_documents_from_directory(DATA_PATH)
+    if not source_documents:
+        raise RuntimeError("未找到初中数学资料；请将教材、错题集或题解放入 data/。")
+    chunks = [chunk for document in tqdm(source_documents, desc="公式感知切分") for chunk in split_math_document(document, args.llm_metadata)]
+    embedding_function = get_embedding_function()
+    client = chromadb.PersistentClient(path=CHROMA_PATH)
+    chunk_collection = _recreate_collection(client, CHUNK_COLLECTION_NAME, embedding_function)
+    summary_collection = _recreate_collection(client, SUMMARY_COLLECTION_NAME, embedding_function)
+
+    chunk_ids = [_stable_id(chunk.metadata.get("source"), chunk.metadata.get("page", 0), index, chunk.page_content[:80]) for index, chunk in enumerate(chunks)]
+    _add_batches(chunk_collection, chunk_ids, [chunk.page_content for chunk in chunks], [chunk.metadata for chunk in chunks])
+
+    summaries, summary_metadata, summary_ids = [], [], []
+    for index, document in enumerate(source_documents):
+        classification = classify_math_text(document.page_content)
+        summary_ids.append(_stable_id(document.metadata.get("source", "unknown"), index))
+        summaries.append(document.page_content[:800])
+        summary_metadata.append({"source": document.metadata.get("source", "unknown"), "chapter": classification.chapter, "grade": classification.grade, "knowledge_points": "、".join(classification.knowledge_points)})
+    _add_batches(summary_collection, summary_ids, summaries, summary_metadata)
+    math_knowledge_graph.save()
+    print(f"知识库完成：{len(source_documents)} 份资料，{len(chunks)} 个公式感知 Chunk，GraphRAG {len(math_knowledge_graph.as_dict()['prerequisites'])} 个节点。")
+
 
 if __name__ == "__main__":
-    # 在Windows上使用多进程时，必须将主逻辑放在 if __name__ == '__main__': 下
-    multiprocessing.freeze_support() 
     main()

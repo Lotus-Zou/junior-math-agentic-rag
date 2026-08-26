@@ -1,0 +1,17 @@
+id: math.answer_generate
+version: 1.0.0
+description: "Junior mathematics answer generate business capability with typed input and output."
+input_schema: agentic_rag.domain.schemas.AnswerGenerateInput
+output_schema: agentic_rag.domain.schemas.AnswerDraftOutput
+handler: agentic_rag.skills.answer_generate.handler.handle
+timeout_ms: 1500
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: []
+policies: [junior_math_scope]
+evaluator: answer_generate_v1
+expose:
+  langchain: false
+  mcp: false
