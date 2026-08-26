@@ -1,9 +1,12 @@
 import csv
+from dataclasses import replace
 import time
 import unittest
+from unittest.mock import patch
 
 from pydantic import ValidationError
 
+import agentic_rag.fast_path as fast_path
 from agentic_rag.fast_path import build_fast_response
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.memory import sanitize_memory_text
@@ -58,6 +61,27 @@ class ProductHardeningTests(unittest.TestCase):
                 self.assertIsNotNone(result)
                 self.assertEqual(result["response_type"], "guided_exercise")
 
+    def test_tampered_local_template_is_not_published_as_guided_exercise(self):
+        templates = getattr(fast_path, "LOCAL_TRANSITION_TEMPLATES", None)
+        self.assertIsNotNone(templates, "local transition templates must be structured and validated")
+
+        for topic, query in (
+            ("algebra", "algebra"),
+            ("geometry", "geometry"),
+            ("linear_function", "linear function"),
+        ):
+            with self.subTest(topic=topic):
+                corrupted = {
+                    **templates,
+                    topic: tuple(replace(template, hidden_answer="incorrect") for template in templates[topic]),
+                }
+                with patch.object(fast_path, "LOCAL_TRANSITION_TEMPLATES", corrupted):
+                    result = build_fast_response(query, [], language="en")
+
+                self.assertNotEqual(result["response_type"], "guided_exercise")
+                self.assertEqual(result["response_type"], "supported_refusal")
+                self.assertNotIn("validation_evidence", result)
+                self.assertNotIn("hidden_answer", str(result).lower())
     def test_difficulty_adjustment_without_exercise_requires_a_topic(self):
         result = build_fast_response("\u96be\u4e00\u70b9", [], language="zh")
 

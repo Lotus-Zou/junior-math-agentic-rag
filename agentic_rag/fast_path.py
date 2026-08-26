@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 import uuid
 
@@ -111,20 +112,27 @@ EN_GEOMETRY_EXERCISES = (
     ),
 )
 
-LINEAR_FUNCTION_EXERCISES = (
-    (
-        "\u5df2\u77e5\u4e00\u6b21\u51fd\u6570 y = 2x + 1\u3002\u5f53 x = 3 \u65f6\uff0c\u6c42 y\uff1b\u5f53 y = 9 \u65f6\uff0c\u6c42 x\u3002",
-        "\u628a x \u7684\u503c\u4ee3\u5165 y = 2x + 1\uff1b\u518d\u628a y = 9 \u4ee3\u5165\u540e\u89e3\u4e00\u6b21\u65b9\u7a0b\u3002",
-        ["\u4e00\u6b21\u51fd\u6570", "\u4ee3\u5165\u6c42\u503c"],
-        "y = 7; x = 4",
+@dataclass(frozen=True)
+class LocalExerciseTemplate:
+    topic: str
+    parameters: tuple[tuple[str, int], ...]
+    hidden_answer: str
+
+
+LOCAL_TRANSITION_TEMPLATES = {
+    "algebra": (
+        LocalExerciseTemplate("algebra", (("coefficient", 3), ("constant", -4), ("total", 11)), "x = 5"),
+        LocalExerciseTemplate("algebra", (("coefficient", 5), ("constant", 7), ("total", 32)), "x = 5"),
     ),
-    (
-        "\u4e00\u6b21\u51fd\u6570 y = -3x + 8 \u7684\u56fe\u50cf\u4e0e y \u8f74\u4ea4\u4e8e\u54ea\u4e2a\u70b9\uff1f\u5f53 x = 2 \u65f6\uff0c\u6c42 y\u3002",
-        "\u4ee4 x = 0 \u627e y \u8f74\u622a\u8ddd\uff1b\u518d\u628a x = 2 \u4ee3\u5165\u89e3\u6790\u5f0f\u3002",
-        ["\u4e00\u6b21\u51fd\u6570", "\u659c\u622a\u5f0f", "\u63cf\u70b9\u4f5c\u56fe"],
-        "(0, 8); y = 2",
+    "geometry": (
+        LocalExerciseTemplate("geometry", (("vertex_angle", 40),), "\u2220B = \u2220C = 70\u00b0"),
+        LocalExerciseTemplate("geometry", (("vertex_angle", 60),), "\u2220B = \u2220C = 60\u00b0"),
     ),
-)
+    "linear_function": (
+        LocalExerciseTemplate("linear_function", (("slope", 2), ("intercept", 1), ("x_value", 3), ("y_value", 9)), "y = 7; x = 4"),
+        LocalExerciseTemplate("linear_function", (("slope", -3), ("intercept", 8), ("x_value", 2), ("y_value", 2)), "y = 2; x = 2"),
+    ),
+}
 
 
 _TOPIC_CHAPTERS = {
@@ -141,6 +149,94 @@ def _local_exercise_index(topic: str, history: list[dict[str, str]], difficulty_
     return hashlib.sha256(seed.encode("utf-8")).digest()[0]
 
 
+def _signed_expression(coefficient: int, variable: str, constant: int) -> str:
+    sign = "+" if constant >= 0 else "-"
+    return f"{coefficient}{variable} {sign} {abs(constant)}"
+
+
+def _render_transition_template(template: LocalExerciseTemplate, language: str) -> tuple[str, str, list[str], str]:
+    parameters = dict(template.parameters)
+    if template.topic == "algebra":
+        coefficient = parameters["coefficient"]
+        constant = parameters["constant"]
+        total = parameters["total"]
+        if coefficient == 0 or (total - constant) % coefficient:
+            raise ValueError("algebra template does not have an integral solution")
+        answer = f"x = {(total - constant) // coefficient}"
+        expression = _signed_expression(coefficient, "x", constant)
+        if language == "en":
+            return (
+                f"Solve {expression} = {total}.",
+                f"Apply the inverse of {constant:+d} to both sides, then divide by {coefficient}.",
+                ["linear equation", "equality properties"],
+                answer,
+            )
+        return (
+            f"\u89e3\u65b9\u7a0b\uff1a{expression} = {total}\u3002",
+            f"\u5148\u5728\u7b49\u53f7\u4e24\u8fb9\u505a\u76f8\u53cd\u8fd0\u7b97\u6d88\u53bb {constant:+d}\uff0c\u518d\u540c\u9664\u4ee5 {coefficient}\u3002",
+            ["\u4e00\u5143\u4e00\u6b21\u65b9\u7a0b", "\u7b49\u5f0f\u7684\u57fa\u672c\u6027\u8d28"],
+            answer,
+        )
+    if template.topic == "geometry":
+        vertex_angle = parameters["vertex_angle"]
+        remainder = 180 - vertex_angle
+        if not 0 < vertex_angle < 180 or remainder % 2:
+            raise ValueError("geometry template has invalid triangle angles")
+        base_angle = remainder // 2
+        answer = f"\u2220B = \u2220C = {base_angle}\u00b0"
+        if language == "en":
+            return (
+                f"In isosceles triangle ABC, AB = AC and angle A = {vertex_angle}\u00b0. Find angles B and C.",
+                "Use equal base angles and the 180-degree triangle angle sum.",
+                ["isosceles triangles", "triangle angle sum"],
+                answer,
+            )
+        return (
+            f"\u5728\u7b49\u8170\u4e09\u89d2\u5f62 ABC \u4e2d\uff0cAB = AC\uff0c\u9876\u89d2 \u2220A = {vertex_angle}\u00b0\u3002\u6c42 \u2220B \u548c \u2220C\u3002",
+            "\u5148\u5229\u7528\u7b49\u8170\u4e09\u89d2\u5f62\u4e24\u4e2a\u5e95\u89d2\u76f8\u7b49\uff0c\u518d\u4f7f\u7528\u4e09\u89d2\u5f62\u5185\u89d2\u548c 180\u00b0\u3002",
+            ["\u7b49\u8170\u4e09\u89d2\u5f62", "\u4e09\u89d2\u5f62\u5185\u89d2\u548c"],
+            answer,
+        )
+    if template.topic == "linear_function":
+        slope = parameters["slope"]
+        intercept = parameters["intercept"]
+        x_value = parameters["x_value"]
+        y_value = parameters["y_value"]
+        if slope == 0 or (y_value - intercept) % slope:
+            raise ValueError("linear-function template cannot be solved exactly")
+        value_at_x = slope * x_value + intercept
+        x_at_y = (y_value - intercept) // slope
+        answer = f"y = {value_at_x}; x = {x_at_y}"
+        expression = _signed_expression(slope, "x", intercept)
+        if language == "en":
+            return (
+                f"For y = {expression}, find y when x = {x_value}, then find x when y = {y_value}.",
+                "Substitute the given x first; then substitute the given y and solve the resulting linear equation.",
+                ["linear function", "substitution"],
+                answer,
+            )
+        return (
+            f"\u5df2\u77e5\u4e00\u6b21\u51fd\u6570 y = {expression}\u3002\u5f53 x = {x_value} \u65f6\uff0c\u6c42 y\uff1b\u5f53 y = {y_value} \u65f6\uff0c\u6c42 x\u3002",
+            "\u5148\u628a\u5df2\u77e5 x \u7684\u503c\u4ee3\u5165\u89e3\u6790\u5f0f\uff1b\u518d\u5c06\u5df2\u77e5 y \u7684\u503c\u4ee3\u5165\u540e\u89e3\u4e00\u6b21\u65b9\u7a0b\u3002",
+            ["\u4e00\u6b21\u51fd\u6570", "\u4ee3\u5165\u6c42\u503c"],
+            answer,
+        )
+    raise ValueError(f"unsupported local template topic: {template.topic}")
+
+
+def _validate_transition_template(template: LocalExerciseTemplate, language: str) -> tuple[str, str, list[str], dict]:
+    try:
+        problem, hint, knowledge_points, expected_answer = _render_transition_template(template, language)
+    except (KeyError, TypeError, ValueError) as error:
+        return "", "", [], {"kind": "deterministic", "passed": False, "reason": str(error)}
+    evidence = {
+        "kind": "deterministic",
+        "passed": template.hidden_answer == expected_answer,
+        "template": template.topic,
+    }
+    return problem, hint, knowledge_points, evidence
+
+
 def _active_exercise_topic(history: list[dict[str, str]], language: str) -> str | None:
     messages = "\n".join(str(item.get("content", "")) for item in history)
     geometry = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
@@ -149,8 +245,11 @@ def _active_exercise_topic(history: list[dict[str, str]], language: str) -> str 
     equations = EN_EXERCISES if language == "en" else ZH_EXERCISES
     if any(equation in messages for equation, _ in equations):
         return "algebra"
-    if any(problem in messages for problem, *_ in LINEAR_FUNCTION_EXERCISES):
-        return "linear_function"
+    for topic, templates in LOCAL_TRANSITION_TEMPLATES.items():
+        for template in templates:
+            problem, _, _, evidence = _validate_transition_template(template, language)
+            if evidence["passed"] and problem in messages:
+                return topic
     return None
 
 
@@ -176,6 +275,22 @@ def _exercise_answer(topic: str, problem: str, hint: str, language: str) -> str:
     )
 
 
+def _invalid_local_template_response(query: str, history: list[dict[str, str]], summary: str, language: str) -> dict:
+    answer = (
+        "This local exercise template could not be verified. Please choose a different topic."
+        if language == "en"
+        else "\u8fd9\u4e2a\u672c\u5730\u7ec3\u4e60\u6a21\u677f\u672a\u901a\u8fc7\u9a8c\u8bc1\uff0c\u8bf7\u9009\u62e9\u5176\u4ed6\u4e3b\u9898\u3002"
+    )
+    response = _base_response(query, answer, history, summary)
+    response.update({
+        "intent": "local_template_validation_failed",
+        "sources": [],
+        "validation_passed": False,
+        "metrics": {"tool_calls": 0},
+    })
+    return normalize_response(response, "supported_refusal")
+
+
 def _local_guided_exercise(
     topic: str,
     query: str,
@@ -184,32 +299,24 @@ def _local_guided_exercise(
     language: str,
     difficulty_delta: int = 0,
 ) -> dict:
-    if topic == "geometry":
-        exercises = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
-        problem, hint, knowledge_points, _, hidden_answer = exercises[_local_exercise_index(topic, history, difficulty_delta) % len(exercises)]
-    elif topic == "algebra":
-        exercises = EN_EXERCISES if language == "en" else ZH_EXERCISES
-        problem, hint = exercises[_local_exercise_index(topic, history, difficulty_delta) % len(exercises)]
-        knowledge_points = ["\u4e00\u5143\u4e00\u6b21\u65b9\u7a0b", "\u7b49\u5f0f\u7684\u57fa\u672c\u6027\u8d28"]
-        hidden_answer = deterministic_equation_answer(f"\u89e3\u65b9\u7a0b {problem}", document_count=1, language=language)
-    else:
-        problem, hint, knowledge_points, hidden_answer = LINEAR_FUNCTION_EXERCISES[
-            _local_exercise_index(topic, history, difficulty_delta) % len(LINEAR_FUNCTION_EXERCISES)
-        ]
+    templates = LOCAL_TRANSITION_TEMPLATES[topic]
+    template = templates[_local_exercise_index(topic, history, difficulty_delta) % len(templates)]
+    problem, hint, knowledge_points, evidence = _validate_transition_template(template, language)
+    if evidence["passed"] is not True:
+        return _invalid_local_template_response(query, history, summary, language)
     answer = _exercise_answer(topic, problem, hint, language)
     response = _base_response(query, answer, history, summary)
     response["sources"] = [{**CORE_SOURCE, "chapter": _TOPIC_CHAPTERS[topic]}]
     response.update({
         "intent": f"{topic}_exercise",
-        "knowledge_points": list(knowledge_points),
+        "knowledge_points": knowledge_points,
         "validation_passed": True,
-        "validation_evidence": {"kind": "deterministic", "passed": bool(hidden_answer), "template": topic},
+        "validation_evidence": evidence,
         "exercise_answer_hidden": True,
         "exercise_state": {"topic": topic, "difficulty_delta": difficulty_delta},
         "metrics": {"tool_calls": 0},
     })
     return normalize_response(response, "guided_exercise")
-
 
 def _topic_clarification(query: str, history: list[dict[str, str]], summary: str, language: str) -> dict:
     missing = "learning topic" if language == "en" else "\u60f3\u7ec3\u4e60\u7684\u5b66\u4e60\u4e3b\u9898"
