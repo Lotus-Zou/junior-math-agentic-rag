@@ -102,3 +102,27 @@ def test_normalize_response_drops_internal_state_and_filters_metrics():
     assert "model_metadata" not in result
     assert result["metrics"] == {"tool_calls": 1, "latency_ms": 12}
 
+
+def test_guided_exercise_requires_private_hidden_answer_signal():
+    evidence = {"kind": "deterministic", "passed": True}
+    for hidden in (None, False):
+        payload = {"answer": "solve 3x=6", "validation_passed": True, "validation_evidence": evidence}
+        if hidden is not None:
+            payload["exercise_answer_hidden"] = hidden
+        with pytest.raises(ValueError, match="guided_exercise"):
+            normalize_response(payload, "guided_exercise")
+
+
+def test_guided_exercise_accepts_private_hidden_answer_signal_without_leaking_it():
+    result = normalize_response(
+        {
+            "answer": "Solve 3x = 6",
+            "validation_passed": True,
+            "validation_evidence": {"kind": "deterministic", "passed": True},
+            "exercise_answer_hidden": True,
+        },
+        "guided_exercise",
+    )
+    assert result["response_type"] == "guided_exercise"
+    assert "exercise_answer_hidden" not in result
+

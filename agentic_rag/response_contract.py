@@ -27,7 +27,7 @@ def normalize_response(payload: dict[str, Any], response_type: ResponseType) -> 
         and evidence.get("passed") is True
     )
     if response_type in {"verified_answer", "guided_exercise"} and (
-        payload.get("validation_passed") is not True or not evidence_ok
+        payload.get("validation_passed") is not True or not evidence_ok or (response_type == "guided_exercise" and payload.get("exercise_answer_hidden") is not True)
     ):
         raise ValueError(f"{response_type} requires explicit passing validation evidence")
 
