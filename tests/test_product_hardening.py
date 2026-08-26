@@ -21,11 +21,12 @@ class ProductHardeningTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result["intent"], "new_question")
-        self.assertEqual(result["critic_report"]["validation_mode"], "local_conversation_control")
+        self.assertEqual(result["response_type"], "clarification_required")
         self.assertEqual(result["metrics"]["tool_calls"], 0)
         self.assertEqual(result["conversation_summary"], "")
         self.assertEqual(len(result["conversation_history"]), 2)
         self.assertNotIn("2x+3=11", str(result["conversation_history"]))
+        self.assertNotIn("critic_report", result)
         self.assertIn("新的完整题目", result["answer"])
 
     def test_switch_question_control_supports_english_alias(self):
@@ -35,10 +36,44 @@ class ProductHardeningTests(unittest.TestCase):
 
         self.assertIsNotNone(result)
         self.assertEqual(result["intent"], "new_question")
+        self.assertEqual(result["response_type"], "clarification_required")
         self.assertEqual(result["conversation_summary"], "")
         self.assertNotIn("2x+3=11", str(result["conversation_history"]))
         self.assertIn("new complete question", result["answer"])
 
+    def test_geometry_topic_is_a_local_guided_exercise(self):
+        result = build_fast_response("\u51e0\u4f55", [], language="zh")
+
+        self.assertEqual(result["response_type"], "guided_exercise")
+        self.assertEqual(result["intent"], "geometry_exercise")
+        self.assertEqual(result["metrics"]["tool_calls"], 0)
+        self.assertNotIn("critic_report", result)
+        self.assertNotIn("validation_evidence", result)
+        self.assertNotIn("hidden_answer", str(result).lower())
+
+    def test_every_advertised_topic_has_a_result(self):
+        for query in ("\u4ee3\u6570", "\u51e0\u4f55", "\u4e00\u6b21\u51fd\u6570"):
+            with self.subTest(query=query):
+                result = build_fast_response(query, [], language="zh")
+                self.assertIsNotNone(result)
+                self.assertEqual(result["response_type"], "guided_exercise")
+
+    def test_difficulty_adjustment_without_exercise_requires_a_topic(self):
+        result = build_fast_response("\u96be\u4e00\u70b9", [], language="zh")
+
+        self.assertEqual(result["response_type"], "clarification_required")
+        self.assertEqual(result["metrics"]["tool_calls"], 0)
+        self.assertIn("\u5b66\u4e60\u4e3b\u9898", result["answer"])
+        self.assertNotIn("critic_report", result)
+    def test_reset_clears_context_with_a_clarification_response(self):
+        history = [{"role": "student", "content": "Solve 2x+3=11"}]
+
+        result = build_fast_response("reset", history, summary="old problem", language="en")
+
+        self.assertEqual(result["response_type"], "clarification_required")
+        self.assertEqual(result["intent"], "new_question")
+        self.assertEqual(result["conversation_summary"], "")
+        self.assertNotIn("2x+3=11", str(result["conversation_history"]))
     def test_memory_database_initialization_does_not_load_embedding_model(self):
         from unittest.mock import patch
         from agentic_rag.memory import initialize_memory_db

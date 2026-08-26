@@ -7,7 +7,9 @@ import hashlib
 import uuid
 
 from agentic_rag.deterministic_tutor import solve_curriculum_problem
+from agentic_rag.local_intents import parse_local_command
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
+from agentic_rag.response_contract import normalize_response
 
 CORE_SOURCE = {
     "chunk_id": None,
@@ -109,6 +111,142 @@ EN_GEOMETRY_EXERCISES = (
     ),
 )
 
+LINEAR_FUNCTION_EXERCISES = (
+    (
+        "\u5df2\u77e5\u4e00\u6b21\u51fd\u6570 y = 2x + 1\u3002\u5f53 x = 3 \u65f6\uff0c\u6c42 y\uff1b\u5f53 y = 9 \u65f6\uff0c\u6c42 x\u3002",
+        "\u628a x \u7684\u503c\u4ee3\u5165 y = 2x + 1\uff1b\u518d\u628a y = 9 \u4ee3\u5165\u540e\u89e3\u4e00\u6b21\u65b9\u7a0b\u3002",
+        ["\u4e00\u6b21\u51fd\u6570", "\u4ee3\u5165\u6c42\u503c"],
+        "y = 7; x = 4",
+    ),
+    (
+        "\u4e00\u6b21\u51fd\u6570 y = -3x + 8 \u7684\u56fe\u50cf\u4e0e y \u8f74\u4ea4\u4e8e\u54ea\u4e2a\u70b9\uff1f\u5f53 x = 2 \u65f6\uff0c\u6c42 y\u3002",
+        "\u4ee4 x = 0 \u627e y \u8f74\u622a\u8ddd\uff1b\u518d\u628a x = 2 \u4ee3\u5165\u89e3\u6790\u5f0f\u3002",
+        ["\u4e00\u6b21\u51fd\u6570", "\u659c\u622a\u5f0f", "\u63cf\u70b9\u4f5c\u56fe"],
+        "(0, 8); y = 2",
+    ),
+)
+
+
+_TOPIC_CHAPTERS = {
+    "geometry": "\u51e0\u4f55",
+    "algebra": "\u4ee3\u6570",
+    "linear_function": "\u51fd\u6570",
+}
+
+
+def _local_exercise_index(topic: str, history: list[dict[str, str]], difficulty_delta: int) -> int:
+    if difficulty_delta:
+        return 1 if difficulty_delta > 0 else 0
+    seed = topic + "\n" + "\n".join(str(item.get("content", "")) for item in history)
+    return hashlib.sha256(seed.encode("utf-8")).digest()[0]
+
+
+def _active_exercise_topic(history: list[dict[str, str]], language: str) -> str | None:
+    messages = "\n".join(str(item.get("content", "")) for item in history)
+    geometry = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
+    if any(problem in messages for problem, *_ in geometry):
+        return "geometry"
+    equations = EN_EXERCISES if language == "en" else ZH_EXERCISES
+    if any(equation in messages for equation, _ in equations):
+        return "algebra"
+    if any(problem in messages for problem, *_ in LINEAR_FUNCTION_EXERCISES):
+        return "linear_function"
+    return None
+
+
+def _exercise_answer(topic: str, problem: str, hint: str, language: str) -> str:
+    if language == "en":
+        labels = {
+            "geometry": "Geometry exercise",
+            "algebra": "Algebra exercise",
+            "linear_function": "Linear-function exercise",
+        }
+        return (
+            f"**{labels[topic]}**\n{problem}\n\n**Hint**\n{hint} [1]\n\n"
+            "Send your reasoning when you finish. I will check it before showing a solution."
+        )
+    labels = {
+        "geometry": "\u51e0\u4f55\u7ec3\u4e60",
+        "algebra": "\u4ee3\u6570\u7ec3\u4e60",
+        "linear_function": "\u4e00\u6b21\u51fd\u6570\u7ec3\u4e60",
+    }
+    return (
+        f"**{labels[topic]}**\n{problem}\n\n**\u63d0\u793a**\n{hint} [1]\n\n"
+        "\u8bf7\u5199\u51fa\u63a8\u5bfc\u8fc7\u7a0b\u540e\u53d1\u6765\uff0c\u6211\u4f1a\u68c0\u67e5\u6b65\u9aa4\uff0c\u6682\u4e0d\u5c55\u793a\u7b54\u6848\u3002"
+    )
+
+
+def _local_guided_exercise(
+    topic: str,
+    query: str,
+    history: list[dict[str, str]],
+    summary: str,
+    language: str,
+    difficulty_delta: int = 0,
+) -> dict:
+    if topic == "geometry":
+        exercises = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
+        problem, hint, knowledge_points, _, hidden_answer = exercises[_local_exercise_index(topic, history, difficulty_delta) % len(exercises)]
+    elif topic == "algebra":
+        exercises = EN_EXERCISES if language == "en" else ZH_EXERCISES
+        problem, hint = exercises[_local_exercise_index(topic, history, difficulty_delta) % len(exercises)]
+        knowledge_points = ["\u4e00\u5143\u4e00\u6b21\u65b9\u7a0b", "\u7b49\u5f0f\u7684\u57fa\u672c\u6027\u8d28"]
+        hidden_answer = deterministic_equation_answer(f"\u89e3\u65b9\u7a0b {problem}", document_count=1, language=language)
+    else:
+        problem, hint, knowledge_points, hidden_answer = LINEAR_FUNCTION_EXERCISES[
+            _local_exercise_index(topic, history, difficulty_delta) % len(LINEAR_FUNCTION_EXERCISES)
+        ]
+    answer = _exercise_answer(topic, problem, hint, language)
+    response = _base_response(query, answer, history, summary)
+    response["sources"] = [{**CORE_SOURCE, "chapter": _TOPIC_CHAPTERS[topic]}]
+    response.update({
+        "intent": f"{topic}_exercise",
+        "knowledge_points": list(knowledge_points),
+        "validation_passed": True,
+        "validation_evidence": {"kind": "deterministic", "passed": bool(hidden_answer), "template": topic},
+        "exercise_answer_hidden": True,
+        "exercise_state": {"topic": topic, "difficulty_delta": difficulty_delta},
+        "metrics": {"tool_calls": 0},
+    })
+    return normalize_response(response, "guided_exercise")
+
+
+def _topic_clarification(query: str, history: list[dict[str, str]], summary: str, language: str) -> dict:
+    missing = "learning topic" if language == "en" else "\u60f3\u7ec3\u4e60\u7684\u5b66\u4e60\u4e3b\u9898"
+    answer = (
+        "Which learning topic should we practise: algebra, geometry, or linear functions?"
+        if language == "en"
+        else "\u8bf7\u544a\u8bc9\u6211\u60f3\u7ec3\u4e60\u7684\u5b66\u4e60\u4e3b\u9898\uff1a\u4ee3\u6570\u3001\u51e0\u4f55\u6216\u4e00\u6b21\u51fd\u6570\u3002"
+    )
+    return normalize_response(
+        {
+            "answer": answer,
+            "intent": "clarification",
+            "sources": [],
+            "validation_passed": True,
+            "conversation_history": [*(history or []), {"role": "student", "content": query}, {"role": "tutor", "content": answer}],
+            "conversation_summary": summary,
+            "clarification": {"missing": [missing]},
+            "metrics": {"tool_calls": 0},
+        },
+        "clarification_required",
+    )
+
+
+def _local_command_response(query: str, history: list[dict[str, str]], summary: str, language: str) -> dict | None:
+    command = parse_local_command(query, language)
+    if command is None:
+        return None
+    if command.action in {"new_question", "reset"}:
+        response = _new_question_response(query, language, force=command.action == "reset")
+        return normalize_response(response, "clarification_required")
+    if command.action == "practice":
+        return _local_guided_exercise(command.topic, query, history, summary, language)
+    topic = _active_exercise_topic(history, language)
+    if topic is None:
+        return _topic_clarification(query, history, summary, language)
+    difficulty_delta = command.difficulty_delta if command.action == "adjust_difficulty" else 0
+    return _local_guided_exercise(topic, query, history, summary, language, difficulty_delta)
 
 def _student_attempt(query: str) -> str:
     for marker in ("学生错误作答：", "学生错误作答:", "错误步骤是", "我写成", "I wrote", "incorrect attempt:"):
@@ -165,8 +303,8 @@ def _base_response(query: str, answer: str, history: list[dict[str, str]], summa
     }
 
 
-def _new_question_response(query: str, language: str) -> dict | None:
-    if not _is_new_question_request(query):
+def _new_question_response(query: str, language: str, force: bool = False) -> dict | None:
+    if not force and not _is_new_question_request(query):
         return None
     if language == "en":
         answer = (
@@ -390,7 +528,8 @@ def build_fast_response(
 ) -> dict | None:
     """Return a deterministic response when the request has a safe local implementation."""
     return (
-        _new_question_response(query, language)
+        _local_command_response(query, history, summary, language)
+        or _new_question_response(query, language)
         or _geometry_exercise_response(query, history, summary, language)
         or _geometry_answer_response(query, history, summary, language)
         or _similar_exercise_response(query, history, summary, language)
