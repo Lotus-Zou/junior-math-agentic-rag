@@ -50,11 +50,55 @@ def test_response_envelope_is_strict_and_exposes_contract_type():
     from agentic_rag.domain.schemas import ResponseEnvelope
 
     result = normalize_response(
-        {"answer": "x = 4", "validation_passed": True}, "verified_answer"
+        {"answer": "x = 4", "validation_passed": True, "validation_evidence": {"kind": "deterministic", "passed": True}}, "verified_answer"
     )
     envelope = ResponseEnvelope.model_validate(result)
     assert envelope.response_type == "verified_answer"
     with pytest.raises(ValidationError):
         ResponseEnvelope.model_validate({**result, "unexpected": True})
 
+
+
+def test_verified_answer_requires_validation_evidence():
+    for evidence in (None, {"kind": "model", "passed": True}, {"kind": "deterministic", "passed": False}):
+        payload = {"answer": "x = 4", "validation_passed": True}
+        if evidence is not None:
+            payload["validation_evidence"] = evidence
+        with pytest.raises(ValueError, match="verified_answer"):
+            normalize_response(payload, "verified_answer")
+
+
+def test_verified_answer_accepts_deterministic_or_independent_critic_evidence():
+    for kind in ("deterministic", "independent_critic"):
+        result = normalize_response(
+            {
+                "answer": "x = 4",
+                "validation_passed": True,
+                "validation_evidence": {"kind": kind, "passed": True},
+            },
+            "verified_answer",
+        )
+        assert result["response_type"] == "verified_answer"
+
+
+def test_normalize_response_drops_internal_state_and_filters_metrics():
+    result = normalize_response(
+        {
+            "answer": "x = 4",
+            "validation_passed": True,
+            "validation_evidence": {"kind": "deterministic", "passed": True},
+            "critic_report": {"passed": True},
+            "deadline_at": 123,
+            "retrieval_trace": [{"query": "secret"}],
+            "model_metadata": {"model": "private"},
+            "metrics": {"tool_calls": 1, "latency_ms": 12, "timeout": True, "raw_tokens": 99},
+        },
+        "verified_answer",
+    )
+    assert "validation_evidence" not in result
+    assert "critic_report" not in result
+    assert "deadline_at" not in result
+    assert "retrieval_trace" not in result
+    assert "model_metadata" not in result
+    assert result["metrics"] == {"tool_calls": 1, "latency_ms": 12}
 

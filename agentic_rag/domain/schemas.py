@@ -159,7 +159,6 @@ class ResponseEnvelope(StrictModel):
     knowledge_points: list[str] = Field(default_factory=list)
     sources: list[Any] = Field(default_factory=list)
     validation_passed: bool = False
-    critic_report: dict[str, Any] = Field(default_factory=dict)
     conversation_history: list[dict[str, str]] = Field(default_factory=list)
     conversation_summary: str = ""
     exercise_state: Any = None
