@@ -1,5 +1,6 @@
 const { chromium } = require("playwright");
 const path = require("path");
+const baseUrl = process.env.SMOKE_BASE_URL || "http://127.0.0.1:8000";
 
 (async () => {
   const browser = await chromium.launch({
@@ -12,7 +13,7 @@ const path = require("path");
     if (message.type() === "error") consoleErrors.push(message.text());
   });
 
-  await page.goto("http://127.0.0.1:8000/", { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
   await page.waitForFunction(() => document.querySelector("#serviceStatus")?.textContent.includes("服务正常"));
   if (!(await page.title()).includes("数问")) throw new Error("Chinese title missing");
 
@@ -65,7 +66,6 @@ const path = require("path");
   const switchResponseMs = Date.now() - switchStarted;
   if (switchResponseMs > 3000) throw new Error(`Switch response exceeded 3s: ${switchResponseMs}ms`);
 
-  await page.locator("#newChatButton").click();
   await page.locator("#questionInput").fill("出一个几何体我做做");
   await page.locator("#askForm").evaluate((form) => form.requestSubmit());
   const geometryAnswer = page.locator(".message.assistant .assistant-answer").last();
@@ -73,6 +73,9 @@ const path = require("path");
   await geometryAnswer.getByText("几何练习", { exact: false }).waitFor();
   const geometryText = await geometryAnswer.innerText();
   if (!geometryText.includes("答案暂不展示")) throw new Error("Geometry exercise revealed or omitted answer-hiding state");
+  if (geometryText.includes("复杂推理服务") || geometryText.includes("超时") || geometryText.includes("Critic")) {
+    throw new Error("Geometry exercise exposed internal failure copy");
+  }
 
   if (consoleErrors.length) throw new Error(`Console errors: ${consoleErrors.join(" | ")}`);
   const screenshot = path.resolve("evaluation", "skill_review", "iteration-1", "webapp-smoke.png");

@@ -15,6 +15,7 @@
     {"id": "ROUTE-003", "category": "routing", "title": "七至九年级高频模板题不必要地调用 LLM", "status": "resolved", "control": "十类严格课程求解器", "test": "test_all_1000_labeled_cases_avoid_external_models_with_latency_budget"},
     {"id": "ROUTE-004", "category": "routing", "title": "前端全等条件示例未命中确定性路径并触发 8 秒超时", "status": "resolved", "control": "全等条件知识题严格本地 Solver，覆盖 SAS 与 SSS 两种充分条件", "test": "test_congruence_missing_condition_example_is_local_and_correct"},
     {"id": "ROUTE-005", "category": "routing", "title": "换个问题被误送入复杂推理链路并触发 8 秒超时", "status": "resolved", "control": "会话控制意图最高优先级本地路由，同时清空上一题历史和摘要", "test": "test_switch_question_control_is_local_and_clears_old_problem"},
+    {"id": "ROUTE-006", "category": "routing", "title": "几何短指令在 API 边界读取净化前的 Critic 字段并触发超时误报", "status": "resolved", "control": "API 只基于公开响应契约持久化路由诊断，不从已净化 envelope 读取内部字段", "test": "test_geometry_never_reaches_complex_reasoning"},
     {"id": "STATE-001", "category": "conversation", "title": "生成几何题后无法继续提示或核对答案", "status": "resolved", "control": "从会话历史恢复本地题目上下文", "test": "test_generated_geometry_exercise_keeps_context_for_answer_check"},
     {"id": "STATE-002", "category": "conversation", "title": "历史角色伪造、单条过长或总量失控", "status": "resolved", "control": "角色白名单与 24 条/32K 字符限制", "test": "test_history_schema_rejects_role_size_and_total_abuse"},
     {"id": "VALID-001", "category": "validation", "title": "Critic 使用上一题期望答案校验新题", "status": "resolved", "control": "练习生成与答案校验状态隔离", "test": "similar exercise regression"},

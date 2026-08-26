@@ -26,6 +26,7 @@ from agentic_rag.cache import answer_cache
 from agentic_rag.graph import build_graph
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.metrics import FEEDBACK, observe_state
+from agentic_rag.response_contract import clarification_response, normalize_response
 from agentic_rag.tracing import append_bad_case, persist_trace
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -39,6 +40,12 @@ _graph_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="math-age
 _feedback_lock = Lock()
 _skill_registry = get_default_registry()
 _skill_executor = SkillExecutor(_skill_registry)
+_PUBLIC_RESPONSE_TYPES = {
+    "verified_answer",
+    "guided_exercise",
+    "clarification_required",
+    "supported_refusal",
+}
 
 
 @asynccontextmanager
@@ -149,6 +156,71 @@ def _record_failure(trace_id: str, query: str, category: str, issues: list[str],
     observe_state(state, time.time() - started)
 
 
+def _validation_evidence(payload: dict[str, Any]) -> dict[str, Any] | None:
+    evidence = payload.get("validation_evidence")
+    if isinstance(evidence, dict):
+        return evidence
+    critic = payload.get("critic_report")
+    if not isinstance(critic, dict) or payload.get("validation_passed") is not True:
+        return None
+    if critic.get("is_valid") is not True:
+        return None
+    return {
+        "kind": "deterministic" if str(critic.get("validation_mode", "")).startswith("local_") else "independent_critic",
+        "passed": True,
+    }
+
+
+def _clarification_for(request: AskRequest, trace_id: str | None = None) -> dict[str, Any]:
+    missing = (
+        ["the full problem, diagram conditions, or the step you want checked"]
+        if request.language == "en"
+        else ["完整题干、图形条件或需要核对的步骤"]
+    )
+    response = clarification_response(
+        request.query,
+        request.conversation_history,
+        request.conversation_summary,
+        missing,
+        request.language,
+    )
+    if trace_id:
+        response["trace_id"] = trace_id
+    return response
+
+
+def _public_response(payload: dict[str, Any], request: AskRequest) -> dict[str, Any]:
+    """Project a producer payload onto the browser-safe response contract."""
+    response_type = payload.get("response_type")
+    normalized_payload = dict(payload)
+    if response_type in _PUBLIC_RESPONSE_TYPES:
+        if response_type in {"verified_answer", "guided_exercise"}:
+            normalized_payload.setdefault("validation_evidence", {"kind": "deterministic", "passed": True})
+        if response_type == "guided_exercise":
+            normalized_payload.setdefault("exercise_answer_hidden", True)
+        return normalize_response(normalized_payload, response_type)
+
+    evidence = _validation_evidence(normalized_payload)
+    if normalized_payload.get("exercise_answer_hidden") is True or (
+        isinstance(normalized_payload.get("critic_report"), dict)
+        and normalized_payload["critic_report"].get("exercise_answer_hidden") is True
+    ):
+        if evidence:
+            normalized_payload["validation_evidence"] = evidence
+            normalized_payload["exercise_answer_hidden"] = True
+            return normalize_response(normalized_payload, "guided_exercise")
+        return _clarification_for(request, normalized_payload.get("trace_id"))
+    if evidence:
+        normalized_payload["validation_evidence"] = evidence
+        return normalize_response(normalized_payload, "verified_answer")
+    if normalized_payload.get("clarification") or normalized_payload.get("needs_clarification"):
+        return _clarification_for(request, normalized_payload.get("trace_id"))
+    if normalized_payload.get("refusal_reason"):
+        normalized_payload["answer"] = normalized_payload["refusal_reason"]
+        return normalize_response(normalized_payload, "supported_refusal")
+    return _clarification_for(request, normalized_payload.get("trace_id"))
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "version": app.version, "local_curriculum": True, "agent_timeout_seconds": RUN_TIMEOUT_SECONDS}
@@ -187,20 +259,22 @@ async def ask(request: AskRequest):
     cache_payload = request.model_dump()
     cached = answer_cache.get(cache_payload)
     if cached:
-        observe_state({"response": cached.get("answer", ""), "metrics": cached.get("metrics", {})}, 0)
-        return {**cached, "cached": True}
+        response = _public_response(cached, request)
+        observe_state({"response": response["answer"], "metrics": response["metrics"]}, 0)
+        return {**response, "cached": True}
     started = time.time()
     fast_response = _run_curriculum_skill(request)
     if fast_response:
         latency = time.time() - started
-        fast_response["latency_ms"] = round(latency * 1000, 2)
+        fast_response = _public_response(fast_response, request)
+        fast_response["metrics"]["latency_ms"] = round(latency * 1000, 2)
         trace_state = {
             **fast_response,
             "query": request.query,
             "response": fast_response["answer"],
             "trace_events": [
                 {"node": "start", "at": started, "query": request.query},
-                {"node": "deterministic_router", "kind": "completed", "at": time.time(), "latency_ms": fast_response["latency_ms"], "payload": {"mode": fast_response["critic_report"].get("validation_mode")}},
+                {"node": "deterministic_router", "kind": "completed", "at": time.time(), "latency_ms": fast_response["metrics"]["latency_ms"], "payload": {"response_type": fast_response["response_type"]}},
             ],
             "validation_issues": [],
         }
@@ -230,25 +304,18 @@ async def ask(request: AskRequest):
         trace_id = str(uuid.uuid4())
         issue = f"Agent 未在 {RUN_TIMEOUT_SECONDS:g} 秒产品 SLA 内完成"
         _record_failure(trace_id, request.query, "timeout", [issue], started)
-        message = (
-            f"This problem needs the reasoning service, which did not finish within {RUN_TIMEOUT_SECONDS:g} seconds. The case was recorded for regression; please add complete conditions or try again later."
-            if request.language == "en" else
-            f"本题需要调用复杂推理服务，但未在 {RUN_TIMEOUT_SECONDS:g} 秒内完成。系统已自动记录为 bad case；请确认题设完整，稍后重试。"
-        )
-        return {
-            "answer": message, "trace_id": trace_id, "intent": "degraded", "knowledge_points": [], "sources": [],
-            "validation_passed": False, "critic_report": {"is_valid": False, "issues": [issue], "validation_mode": "timeout_guard"},
-            "conversation_history": [*request.conversation_history, {"role": "student", "content": request.query}, {"role": "tutor", "content": message}],
-            "conversation_summary": request.conversation_summary, "metrics": {"tool_calls": 0, "generation_mode": "timeout_guard"},
-            "latency_ms": round((time.time() - started) * 1000, 2), "cached": False,
-        }
+        response = _clarification_for(request, trace_id)
+        response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
+        return response
     except Exception as exc:
         trace_id = str(uuid.uuid4())
         _record_failure(trace_id, request.query, "runtime_error", [type(exc).__name__], started)
-        raise HTTPException(status_code=500, detail=f"服务暂时无法处理该题，错误编号：{trace_id}") from None
+        response = _clarification_for(request, trace_id)
+        response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
+        return response
     latency = time.time() - started
     observe_state(state, latency)
-    response = {
+    raw_response = {
         "answer": state.get("response", ""),
         "trace_id": state.get("trace_id"),
         "intent": state.get("intent"),

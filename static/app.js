@@ -9,17 +9,17 @@ const translations = {
     functionTitle: "一次函数", functionCopy: "斜率和截距怎么看？", stepInput: "输入完整题目", stepInputCopy: "保留公式、数字和图形条件",
     stepMistake: "补充错误作答", stepMistakeCopy: "便于定位第一处错误", stepFollow: "根据提示继续追问", stepFollowCopy: "会话会保留当前题目状态",
     addMistake: "添加我的错误作答", mistakeLabel: "我的错误步骤或答案", mistakePlaceholder: "例如：我移项后写成 2x = 11 + 3",
-    questionLabel: "数学题目", questionPlaceholder: "粘贴完整题目，或继续追问上一步……", composerNote: "回答会经过教材检索和独立 Critic 校验；题设不足时系统会先追问。",
+    questionLabel: "数学题目", questionPlaceholder: "粘贴完整题目，或继续追问上一步……", composerNote: "回答会经过教材检索和独立校验；题设不足时系统会先追问。",
     evidenceLabel: "回答依据", evidenceTitle: "教材来源", helpEyebrow: "三步完成订正", helpTitle: "如何使用数问",
     helpOneTitle: "输入原题", helpOneCopy: "尽量包含完整题干、选项和图形中的已知条件，公式可以直接输入。",
     helpTwoTitle: "写下你的做法", helpTwoCopy: "点击“添加我的错误作答”，写下卡住的位置或算错的步骤。",
     helpThreeTitle: "继续追问", helpThreeCopy: "收到分析后可直接问“为什么变号”或“下一步怎么想”，无需重复题目。",
     startUsing: "开始使用", wrongPrefix: "我的作答：", tutor: "数问", analyzing: "正在分析这道题",
     parseStep: "解析题目", retrieveStep: "检索教材", verifyStep: "独立校验", validated: "已通过独立校验", notValidated: "未通过独立校验",
-    localValidated: "已通过本地确定性校验", localExercise: "本地生成练习（答案隐藏）",
+    localValidated: "已通过本地确定性校验", localExercise: "本地生成练习（答案隐藏）", needsMoreInfo: "需要补充信息", scopeLimited: "当前请求暂不支持",
     sources: "查看来源", noSources: "本次回答没有可展示的来源。", sourceUnknown: "教材片段", chapter: "章节", rank: "排序",
     helpful: "回答有帮助", incorrect: "回答有问题", feedbackThanks: "反馈已记录", feedbackFailed: "反馈提交失败",
-    emptyQuestion: "请先输入完整题目。", requestFailed: "请求失败，请确认模型配置和网络连接。", timeout: "处理超时，请稍后重试。",
+    emptyQuestion: "请先输入完整题目。", requestFailed: "请补充完整题干、图形条件或需要核对的步骤。", timeout: "请补充完整题干、图形条件或需要核对的步骤。",
     newSessionReady: "已开始新的订正", sourcesCount: "条来源", latency: "耗时", cached: "缓存命中",
     menuLabel: "打开菜单", helpLabel: "使用说明", sendLabel: "发送题目", closeLabel: "关闭",
     examples: {
@@ -38,17 +38,17 @@ const translations = {
     functionTitle: "Linear function", functionCopy: "How do slope and intercept work?", stepInput: "Enter the full problem", stepInputCopy: "Keep formulas, values, and diagram conditions",
     stepMistake: "Add your attempt", stepMistakeCopy: "Helps locate the first error", stepFollow: "Ask a follow-up", stepFollowCopy: "The current problem stays in context",
     addMistake: "Add my incorrect attempt", mistakeLabel: "My incorrect steps or answer", mistakePlaceholder: "Example: I changed it to 2x = 11 + 3",
-    questionLabel: "Math problem", questionPlaceholder: "Paste the full problem or ask about the previous step...", composerNote: "Responses use textbook retrieval and an independent Critic. Missing conditions trigger a follow-up question.",
+    questionLabel: "Math problem", questionPlaceholder: "Paste the full problem or ask about the previous step...", composerNote: "Responses use textbook retrieval and an independent check. Missing conditions trigger a follow-up question.",
     evidenceLabel: "Answer evidence", evidenceTitle: "Textbook sources", helpEyebrow: "Correct in three steps", helpTitle: "How to use MathTrace",
     helpOneTitle: "Enter the problem", helpOneCopy: "Include the full prompt, choices, and known diagram conditions. You can type formulas directly.",
     helpTwoTitle: "Add your work", helpTwoCopy: "Select Add my incorrect attempt and enter where you got stuck or made a mistake.",
     helpThreeTitle: "Ask follow-ups", helpThreeCopy: "After the analysis, ask why a sign changed or what to try next without repeating the problem.",
     startUsing: "Start", wrongPrefix: "My attempt:", tutor: "MathTrace", analyzing: "Analyzing this problem",
     parseStep: "Parse problem", retrieveStep: "Retrieve textbook", verifyStep: "Independent check", validated: "Independent check passed", notValidated: "Independent check failed",
-    localValidated: "Local deterministic check passed", localExercise: "Locally generated exercise (answer hidden)",
+    localValidated: "Local deterministic check passed", localExercise: "Locally generated exercise (answer hidden)", needsMoreInfo: "More information needed", scopeLimited: "Request not supported",
     sources: "View sources", noSources: "No displayable sources for this response.", sourceUnknown: "Textbook excerpt", chapter: "Chapter", rank: "Rank",
     helpful: "Helpful answer", incorrect: "Report an issue", feedbackThanks: "Feedback recorded", feedbackFailed: "Could not submit feedback",
-    emptyQuestion: "Enter the complete problem first.", requestFailed: "Request failed. Check the model configuration and network connection.", timeout: "The request timed out. Please try again.",
+    emptyQuestion: "Enter the complete problem first.", requestFailed: "Please add the full problem, diagram conditions, or the step you want checked.", timeout: "Please add the full problem, diagram conditions, or the step you want checked.",
     newSessionReady: "New correction started", sourcesCount: "sources", latency: "Latency", cached: "Cached",
     menuLabel: "Open menu", helpLabel: "How to use", sendLabel: "Send problem", closeLabel: "Close",
     examples: {
@@ -78,6 +78,16 @@ const elements = {
 };
 
 function t(key) { return translations[state.language][key] ?? key; }
+
+function responseLabel(responseType) {
+  const responseLabels = {
+    verified_answer: t("validated"),
+    guided_exercise: t("localExercise"),
+    clarification_required: t("needsMoreInfo"),
+    supported_refusal: t("scopeLimited")
+  };
+  return responseLabels[responseType] ?? t("needsMoreInfo");
+}
 
 function applyLanguage(language) {
   state.language = language;
@@ -272,14 +282,10 @@ function appendAssistantMessage(result) {
   article.innerHTML = `<div class="avatar" aria-hidden="true">Σ</div><div class="message-content"><div class="assistant-answer"></div><div class="answer-meta"></div><div class="message-actions"></div></div>`;
   renderRichAnswer(article.querySelector(".assistant-answer"), result.answer);
   const meta = article.querySelector(".answer-meta");
-  const validationMode = result.critic_report?.validation_mode;
-  const validationLabel = result.validation_passed
-    ? (validationMode === "local_template" ? t("localExercise") : validationMode?.startsWith("local_") ? t("localValidated") : t("validated"))
-    : t("notValidated");
-  addMetaChip(meta, validationLabel, result.validation_passed ? "valid" : "invalid");
+  addMetaChip(meta, responseLabel(result.response_type), result.validation_passed ? "valid" : "invalid");
   (result.knowledge_points || []).slice(0, 4).forEach((point) => addMetaChip(meta, point));
   if (result.sources?.length) addMetaChip(meta, `${result.sources.length} ${t("sourcesCount")}`);
-  if (result.latency_ms) addMetaChip(meta, `${t("latency")} ${(result.latency_ms / 1000).toFixed(1)}s`);
+  if (result.metrics?.latency_ms) addMetaChip(meta, `${t("latency")} ${(result.metrics.latency_ms / 1000).toFixed(1)}s`);
   if (result.cached) addMetaChip(meta, t("cached"));
 
   const actions = article.querySelector(".message-actions");
@@ -305,10 +311,7 @@ function appendAssistantMessage(result) {
 function showSources(result) {
   elements.sourceList.replaceChildren();
   elements.validation.className = `validation-summary${result.validation_passed ? "" : " invalid"}`;
-  const validationMode = result.critic_report?.validation_mode;
-  elements.validation.textContent = result.validation_passed
-    ? (validationMode === "local_template" ? t("localExercise") : validationMode?.startsWith("local_") ? t("localValidated") : t("validated"))
-    : t("notValidated");
+  elements.validation.textContent = responseLabel(result.response_type);
   if (!result.sources?.length) {
     const empty = document.createElement("p");
     empty.className = "empty-sources";
@@ -373,7 +376,7 @@ async function submitQuestion(event) {
     state.latestResult = result;
     appendAssistantMessage(result);
   } catch (error) {
-    appendAssistantMessage({ answer: error.name === "AbortError" ? t("timeout") : `${t("requestFailed")}\n${error.message}`, validation_passed: false, sources: [] });
+    appendAssistantMessage({ answer: error.name === "AbortError" ? t("timeout") : t("requestFailed"), response_type: "clarification_required", validation_passed: false, sources: [] });
   } finally {
     window.clearTimeout(timeoutId);
     window.clearInterval(Number(loading.dataset.timer));
