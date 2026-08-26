@@ -2,8 +2,22 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Literal
 import uuid
+
+
+_preserve_internal_evidence: ContextVar[bool] = ContextVar("preserve_internal_evidence", default=False)
+
+
+@contextmanager
+def preserve_internal_evidence():
+    token = _preserve_internal_evidence.set(True)
+    try:
+        yield
+    finally:
+        _preserve_internal_evidence.reset(token)
 
 
 ResponseType = Literal[
@@ -56,6 +70,10 @@ def normalize_response(payload: dict[str, Any], response_type: ResponseType) -> 
     else:
         result["metrics"] = {}
     result["response_type"] = response_type
+    if _preserve_internal_evidence.get():
+        result["_validation_evidence"] = evidence
+        if response_type == "guided_exercise":
+            result["_exercise_answer_hidden"] = payload.get("exercise_answer_hidden") is True
     return result
 
 def _turns(query: str, history: list[dict[str, str]], answer: str) -> list[dict[str, str]]:
