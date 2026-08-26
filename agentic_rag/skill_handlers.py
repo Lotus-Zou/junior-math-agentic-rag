@@ -17,7 +17,7 @@ from agentic_rag.fast_path import build_fast_response
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.math_taxonomy import classify_math_text
 from agentic_rag.math_validation import deterministic_math_checks
-from agentic_rag.response_contract import preserve_internal_evidence
+from agentic_rag.response_contract import capture_trusted_skill_response_contract
 
 
 def _candidate(doc: Any) -> RetrievalCandidate:
@@ -66,8 +66,17 @@ def knowledge_classify(data: QueryInput, _context) -> ClassificationOutput:
 
 
 def curriculum_solve(data: CurriculumSolveInput, _context) -> CurriculumSolveOutput:
-    with preserve_internal_evidence():
-        response = build_fast_response(data.query, data.conversation_history, data.conversation_summary, data.language)
+    response = build_fast_response(data.query, data.conversation_history, data.conversation_summary, data.language)
+    if response:
+        capture_trusted_skill_response_contract(response)
+        response = {
+            key: value
+            for key, value in response.items()
+            if key not in {
+                "validation_evidence", "_validation_evidence", "exercise_answer_hidden",
+                "_exercise_answer_hidden", "critic_report",
+            }
+        }
     return CurriculumSolveOutput(handled=response is not None, response=response)
 
 

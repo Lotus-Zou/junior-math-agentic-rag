@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 import json
 import logging
 import time
@@ -27,7 +28,10 @@ from agentic_rag.cache import answer_cache
 from agentic_rag.graph import build_graph
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.metrics import FEEDBACK, observe_state
-from agentic_rag.response_contract import clarification_response, normalize_response
+from agentic_rag.response_contract import (
+    capture_skill_contract, clarification_response, consume_skill_contract, normalize_response,
+    peek_skill_contract,
+)
 from agentic_rag.tracing import append_bad_case, persist_trace
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -96,6 +100,11 @@ class FeedbackRequest(BaseModel):
     comment: str = Field(default="", max_length=2000)
 
 
+@dataclass(frozen=True)
+class CurriculumSkillRun:
+    response: dict[str, Any]
+    contract: dict[str, Any]
+
 def get_graph():
     global _graph
     if _graph is None:
@@ -105,7 +114,7 @@ def get_graph():
     return _graph
 
 
-def _run_curriculum_skill(request: AskRequest) -> dict | None:
+def _run_curriculum_skill(request: AskRequest) -> CurriculumSkillRun | None:
     trace_id = str(uuid.uuid4())
     context = SkillContext(
         request_id=trace_id,
@@ -113,25 +122,31 @@ def _run_curriculum_skill(request: AskRequest) -> dict | None:
         language=request.language,
         deadline_at=datetime.now(timezone.utc) + timedelta(seconds=RUN_TIMEOUT_SECONDS),
     )
-    result = _skill_executor.execute(
-        "math.curriculum_solve@1",
-        {
-            "query": request.query,
-            "conversation_summary": request.conversation_summary,
-            "conversation_history": request.conversation_history,
-            "language": request.language,
-        },
-        context,
-        pipeline="math.correction@1.0.0",
-    )
+    with capture_skill_contract() as capture:
+        result = _skill_executor.execute(
+            "math.curriculum_solve@1",
+            {
+                "query": request.query,
+                "conversation_summary": request.conversation_summary,
+                "conversation_history": request.conversation_history,
+                "language": request.language,
+            },
+            context,
+            pipeline="math.correction@1.0.0",
+        )
+        contract = consume_skill_contract(capture)
     if result.status != SkillStatus.OK or not result.value or not result.value.handled:
         return None
     response = result.value.response
-    if response:
-        response.setdefault("metrics", {})["skill_runtime_ms"] = result.metrics["latency_ms"]
-        response["metrics"]["skill"] = result.provenance
-    return response
+    if not response:
+        return None
+    response.setdefault("metrics", {})["skill_runtime_ms"] = result.metrics["latency_ms"]
+    response["metrics"]["skill"] = result.provenance
+    return CurriculumSkillRun(response=response, contract=contract)
 
+
+def _peek_skill_contract() -> dict[str, Any] | None:
+    return peek_skill_contract()
 
 def _document_sources(state: dict) -> list[dict[str, Any]]:
     return [
@@ -181,15 +196,6 @@ def _validated_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
         "validation_evidence": {"kind": candidate["kind"], "passed": True},
         "exercise_answer_hidden": contract.get("exercise_answer_hidden") is True,
     }
-
-
-def _skill_contract(payload: dict[str, Any]) -> dict[str, Any]:
-    return _validated_contract(
-        {
-            "validation_evidence": payload.get("_validation_evidence"),
-            "exercise_answer_hidden": payload.get("_exercise_answer_hidden"),
-        }
-    )
 
 
 def _graph_contract(state: dict[str, Any]) -> dict[str, Any]:
@@ -293,22 +299,33 @@ def _cache_record(public_response: dict[str, Any], contract: dict[str, Any]) -> 
 
 
 def _cached_response(cached: Any, request: AskRequest) -> dict[str, Any]:
-    if not isinstance(cached, dict):
-        raise ContractViolation("cache record must be an object")
-    public = cached.get("public")
-    contract = cached.get("contract")
+    if not isinstance(cached, dict) or set(cached) != {"public", "contract"}:
+        raise ContractViolation("cache record must match the writer schema")
+    public = cached["public"]
+    contract = cached["contract"]
     if not isinstance(public, dict) or not isinstance(contract, dict):
         raise ContractViolation("cache record is missing contract metadata")
-    sanitized_public = dict(public)
-    for field in (
-        "validation_evidence",
-        "_validation_evidence",
-        "exercise_answer_hidden",
-        "_exercise_answer_hidden",
-        "critic_report",
+    response_type = public.get("response_type")
+    if response_type not in {"verified_answer", "guided_exercise"}:
+        raise ContractViolation("cache record has a non-cacheable response type")
+    if set(contract) != {"validation_evidence", "exercise_answer_hidden"}:
+        raise ContractViolation("cache contract must match the writer schema")
+    if response_type == "guided_exercise" and contract["exercise_answer_hidden"] is not True:
+        raise ContractViolation("guided cache record is missing hidden-answer signal")
+    if response_type == "verified_answer" and contract["exercise_answer_hidden"] is not False:
+        raise ContractViolation("verified cache record has an invalid hidden-answer signal")
+    if any(
+        field in public
+        for field in (
+            "validation_evidence", "_validation_evidence", "exercise_answer_hidden",
+            "_exercise_answer_hidden", "critic_report",
+        )
     ):
-        sanitized_public.pop(field, None)
-    return _public_response(sanitized_public, request, contract=contract)
+        raise ContractViolation("cache public response contains contract fields")
+    trusted_contract = _validated_contract(contract)
+    if not trusted_contract:
+        raise ContractViolation("cache record has invalid validation evidence")
+    return _public_response(public, request, contract=trusted_contract)
 
 
 def _readiness_checks() -> dict[str, bool]:
@@ -357,9 +374,10 @@ async def ask(request: AskRequest):
             observe_state({"response": response["answer"], "metrics": response["metrics"]}, 0)
             return {**response, "cached": True}
 
-        fast_payload = _run_curriculum_skill(request)
-        if fast_payload:
-            fast_contract = _skill_contract(fast_payload)
+        fast_run = _run_curriculum_skill(request)
+        if fast_run:
+            fast_payload = fast_run.response
+            fast_contract = _validated_contract(fast_run.contract)
             response = _public_response(fast_payload, request, contract=fast_contract)
             latency = time.time() - started
             response["metrics"]["latency_ms"] = round(latency * 1000, 2)

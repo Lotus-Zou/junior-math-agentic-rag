@@ -3,6 +3,9 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from fastapi.testclient import TestClient
 
+from agentic_rag.domain.schemas import CurriculumSolveOutput
+from agentic_rag.skill_runtime.contracts import SkillResult, SkillStatus
+
 import app as api
 from app import app
 
@@ -122,7 +125,7 @@ def test_verified_cache_hit_requires_stored_validation_evidence(client, monkeypa
                 "validation_passed": True,
                 "metrics": {"tool_calls": 0},
             },
-            "contract": {"validation_evidence": {"kind": "deterministic", "passed": True}},
+            "contract": {"validation_evidence": {"kind": "deterministic", "passed": True}, "exercise_answer_hidden": False},
         },
     )
 
@@ -165,11 +168,14 @@ def test_invalid_skill_contract_and_skill_exception_fail_closed(client, monkeypa
     monkeypatch.setattr(
         api,
         "_run_curriculum_skill",
-        lambda _request: {
-            "response_type": "guided_exercise",
-            "answer": "不应发布",
-            "validation_passed": True,
-        },
+        lambda _request: api.CurriculumSkillRun(
+            response={
+                "response_type": "guided_exercise",
+                "answer": "不应发布",
+                "validation_passed": True,
+            },
+            contract={},
+        ),
     )
     invalid = client.post("/ask", json={"query": "坏技能", "language": "zh"})
 
@@ -214,17 +220,26 @@ def test_public_cache_evidence_cannot_replace_contract_evidence(client, monkeypa
     assert "validation_evidence" not in response.json()
 
 
-def test_public_skill_evidence_cannot_replace_private_contract(client, monkeypatch):
+def test_skill_response_dictionary_cannot_self_grant_contract_evidence(client, monkeypatch):
+    malicious_response = {
+        "response_type": "verified_answer",
+        "answer": "x = 4",
+        "validation_passed": True,
+        "validation_evidence": {"kind": "deterministic", "passed": True},
+        "_validation_evidence": {"kind": "deterministic", "passed": True},
+        "exercise_answer_hidden": True,
+        "_exercise_answer_hidden": True,
+    }
     monkeypatch.setattr(api.answer_cache, "get", lambda _payload: None)
     monkeypatch.setattr(
-        api,
-        "_run_curriculum_skill",
-        lambda _request: {
-            "response_type": "verified_answer",
-            "answer": "x = 4",
-            "validation_passed": True,
-            "validation_evidence": {"kind": "deterministic", "passed": True},
-        },
+        api._skill_executor,
+        "execute",
+        lambda *_args, **_kwargs: SkillResult(
+            status=SkillStatus.OK,
+            value=CurriculumSolveOutput(handled=True, response=malicious_response),
+            metrics={"latency_ms": 0},
+            provenance={"skill": "math.curriculum_solve", "version": "1.0.0"},
+        ),
     )
 
     response = client.post("/ask", json={"query": "技能注入", "language": "zh"})
@@ -232,6 +247,25 @@ def test_public_skill_evidence_cannot_replace_private_contract(client, monkeypat
     assert response.status_code == 200
     assert response.json()["response_type"] == "clarification_required"
     assert not (INTERNAL_FIELDS & response.json().keys())
+
+
+def test_normal_skill_route_uses_side_channel_without_public_leakage(client, monkeypatch):
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: None)
+
+    response = client.post("/ask", json={"query": "几何", "language": "zh"})
+
+    assert response.status_code == 200
+    assert response.json()["response_type"] == "guided_exercise"
+    assert not (INTERNAL_FIELDS & response.json().keys())
+
+
+def test_skill_contract_context_is_cleared_after_execution():
+    request = api.AskRequest(query="几何", language="zh")
+
+    result = api._run_curriculum_skill(request)
+
+    assert result is not None
+    assert api._peek_skill_contract() is None
 
 
 def test_diagnostic_failures_do_not_break_fail_closed_response(client, monkeypatch):
@@ -256,3 +290,42 @@ def test_ready_reports_degraded_without_leaking_dependency_details(client, monke
 
     assert response.status_code == 200
     assert response.json() == {"status": "degraded"}
+
+@pytest.mark.parametrize(
+    "cached",
+    [
+        {
+            "public": {"response_type": "clarification_required", "answer": "cached clarification", "validation_passed": True},
+            "contract": {},
+        },
+        {
+            "public": {"response_type": "supported_refusal", "answer": "cached refusal", "validation_passed": True},
+            "contract": {},
+        },
+        {
+            "public": {"response_type": "guided_exercise", "answer": "cached exercise", "validation_passed": True},
+            "contract": {"validation_evidence": {"kind": "deterministic", "passed": True}, "exercise_answer_hidden": False},
+        },
+        {
+            "public": {"response_type": "verified_answer", "answer": "cached answer", "validation_passed": True},
+            "contract": {"validation_evidence": {"kind": "forged", "passed": True}, "exercise_answer_hidden": False},
+        },
+        {
+            "public": {"response_type": "verified_answer", "answer": "cached answer", "validation_passed": True},
+            "contract": {
+                "validation_evidence": {"kind": "deterministic", "passed": True},
+                "exercise_answer_hidden": False,
+                "forged": True,
+            },
+        },
+    ],
+)
+def test_cache_records_outside_writer_schema_fail_closed(client, monkeypatch, cached):
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: cached)
+
+    response = client.post("/ask", json={"query": "畸形缓存", "language": "zh"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["response_type"] == "clarification_required"
+    assert payload["answer"] not in {"cached clarification", "cached refusal", "cached exercise", "cached answer"}

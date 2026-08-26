@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from contextvars import copy_context
 from typing import Any
 
 from pydantic import ValidationError
@@ -39,7 +40,8 @@ class SkillExecutor:
             for _ in range(manifest.max_attempts):
                 try:
                     pool = ThreadPoolExecutor(max_workers=1)
-                    future = pool.submit(manifest.handler_callable, validated, context)
+                    execution_context = copy_context()
+                    future = pool.submit(execution_context.run, manifest.handler_callable, validated, context)
                     try:
                         raw = future.result(timeout=timeout_ms / 1000)
                     finally:

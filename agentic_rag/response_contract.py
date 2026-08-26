@@ -4,20 +4,72 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, Literal
 import uuid
 
 
-_preserve_internal_evidence: ContextVar[bool] = ContextVar("preserve_internal_evidence", default=False)
+@dataclass
+class SkillContractCapture:
+    contract: dict[str, Any] | None = None
+
+
+_skill_contract_capture: ContextVar[SkillContractCapture | None] = ContextVar(
+    "skill_contract_capture", default=None
+)
 
 
 @contextmanager
-def preserve_internal_evidence():
-    token = _preserve_internal_evidence.set(True)
+def capture_skill_contract():
+    capture = SkillContractCapture()
+    token = _skill_contract_capture.set(capture)
     try:
-        yield
+        yield capture
     finally:
-        _preserve_internal_evidence.reset(token)
+        capture.contract = None
+        _skill_contract_capture.reset(token)
+
+
+def consume_skill_contract(capture: SkillContractCapture) -> dict[str, Any]:
+    contract, capture.contract = capture.contract, None
+    return dict(contract or {})
+
+
+def peek_skill_contract() -> dict[str, Any] | None:
+    capture = _skill_contract_capture.get()
+    return None if capture is None or capture.contract is None else dict(capture.contract)
+
+
+def _store_skill_contract(evidence: Any, hidden: bool) -> None:
+    capture = _skill_contract_capture.get()
+    if capture is None:
+        return
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("kind") in {"deterministic", "independent_critic"}
+        and evidence.get("passed") is True
+    ):
+        capture.contract = {
+            "validation_evidence": {"kind": evidence["kind"], "passed": True},
+            "exercise_answer_hidden": hidden,
+        }
+
+
+def capture_trusted_skill_response_contract(payload: dict[str, Any]) -> None:
+    """Store a repository-owned fast-path contract outside its public response."""
+    if _skill_contract_capture.get() is None or peek_skill_contract() is not None:
+        return
+    critic = payload.get("critic_report")
+    if (
+        isinstance(critic, dict)
+        and payload.get("validation_passed") is True
+        and critic.get("is_valid") is True
+    ):
+        kind = "deterministic" if str(critic.get("validation_mode", "")).startswith("local_") else "independent_critic"
+        _store_skill_contract(
+            {"kind": kind, "passed": True},
+            critic.get("exercise_answer_hidden") is True,
+        )
 
 
 ResponseType = Literal[
@@ -70,10 +122,8 @@ def normalize_response(payload: dict[str, Any], response_type: ResponseType) -> 
     else:
         result["metrics"] = {}
     result["response_type"] = response_type
-    if _preserve_internal_evidence.get():
-        result["_validation_evidence"] = evidence
-        if response_type == "guided_exercise":
-            result["_exercise_answer_hidden"] = payload.get("exercise_answer_hidden") is True
+    if response_type in {"verified_answer", "guided_exercise"}:
+        _store_skill_contract(evidence, payload.get("exercise_answer_hidden") is True)
     return result
 
 def _turns(query: str, history: list[dict[str, str]], answer: str) -> list[dict[str, str]]:
