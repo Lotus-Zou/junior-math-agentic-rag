@@ -151,6 +151,23 @@ class RenderInput(StrictModel):
     validation_passed: bool = True
 
 
+class ResponseEnvelope(StrictModel):
+    response_type: Literal["verified_answer", "guided_exercise", "clarification_required", "supported_refusal"]
+    answer: str = ""
+    trace_id: str = ""
+    intent: str = ""
+    knowledge_points: list[str] = Field(default_factory=list)
+    sources: list[Any] = Field(default_factory=list)
+    validation_passed: bool = False
+    critic_report: dict[str, Any] = Field(default_factory=dict)
+    conversation_history: list[dict[str, str]] = Field(default_factory=list)
+    conversation_summary: str = ""
+    exercise_state: Any = None
+    clarification: dict[str, Any] | None = None
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    cached: bool = False
+
+
 class AnswerEnvelope(StrictModel):
     answer: str
     language: Literal["zh", "en"] = "zh"
