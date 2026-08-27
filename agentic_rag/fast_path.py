@@ -6,9 +6,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import re
+from typing import Any
 import unicodedata
 import uuid
 
+from agentic_rag.domain.schemas import PublicExerciseState
 from agentic_rag.deterministic_tutor import solve_curriculum_problem
 from agentic_rag.local_intents import parse_local_command
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
@@ -264,43 +266,95 @@ def _validate_transition_template(
     return problem, hint, knowledge_points, private_state
 
 
-def _active_exercise_topic(history: list[dict[str, str]], language: str) -> str | None:
-    labels = (
-        {
-            "**Geometry exercise**": "geometry",
-            "**Algebra exercise**": "algebra",
-            "**Linear-function exercise**": "linear_function",
-            "**Similar exercise**": "algebra",
-        }
-        if language == "en"
-        else {
-            "**几何练习**": "geometry",
-            "**代数练习**": "algebra",
-            "**一次函数练习**": "linear_function",
-            "**类似练习**": "algebra",
-        }
-    )
-    geometry = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
-    equations = EN_EXERCISES if language == "en" else ZH_EXERCISES
-    for message in reversed(history or []):
-        content = str(message.get("content", ""))
-        for label, topic in labels.items():
-            if label in content:
-                return topic
-        for template in geometry:
-            try:
-                rendered = _render_geometry_template(template, language)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if rendered.problem in content:
-                return "geometry"
-        if any(template.equation in content for template in equations):
-            return "algebra"
+def _known_exercise_provenance() -> list[tuple[str, str, str, str, str]]:
+    known: list[tuple[str, str, str, str, str]] = []
+    for exercise_language in ("zh", "en"):
         for topic, templates in LOCAL_TRANSITION_TEMPLATES.items():
             for template in templates:
-                problem, _, _, private_state = _validate_transition_template(template, language)
-                if private_state is not None and problem in content:
-                    return topic
+                problem, hint, _, private_state = _validate_transition_template(
+                    template, exercise_language
+                )
+                if private_state is not None:
+                    known.append(
+                        (
+                            topic,
+                            template.template_id,
+                            private_state.public_fingerprint,
+                            problem,
+                            hint,
+                        )
+                    )
+        geometry_templates = (
+            EN_GEOMETRY_EXERCISES
+            if exercise_language == "en"
+            else ZH_GEOMETRY_EXERCISES
+        )
+        for template in geometry_templates:
+            try:
+                rendered = _render_geometry_template(template, exercise_language)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if _validate_geometry_template(template, exercise_language, rendered) is not None:
+                known.append(
+                    (
+                        "geometry",
+                        template.template_id,
+                        rendered.public_fingerprint,
+                        rendered.problem,
+                        rendered.hint,
+                    )
+                )
+        equation_templates = EN_EXERCISES if exercise_language == "en" else ZH_EXERCISES
+        for template in equation_templates:
+            known.append(
+                (
+                    "algebra",
+                    template.template_id,
+                    exercise_public_fingerprint(
+                        template.template_id, "algebra", template.equation, template.hint
+                    ),
+                    template.equation,
+                    template.hint,
+                )
+            )
+    return known
+
+
+def _sanitized_exercise_topic(
+    value: Any, known: list[tuple[str, str, str, str, str]]
+) -> str | None:
+    try:
+        state = PublicExerciseState.model_validate(value)
+    except (TypeError, ValueError):
+        return None
+    if not state.template_id or not state.fingerprint:
+        return None
+    for topic, template_id, fingerprint, _, _ in known:
+        if (
+            state.topic == topic
+            and state.template_id == template_id
+            and state.fingerprint == fingerprint
+        ):
+            return topic
+    return None
+
+
+def _active_exercise_topic(history: list[dict[str, Any]], language: str) -> str | None:
+    del language
+    known = _known_exercise_provenance()
+    for message in reversed(history or []):
+        if message.get("role") not in {"tutor", "assistant"}:
+            continue
+        topic = _sanitized_exercise_topic(message.get("exercise_state"), known)
+        if topic is not None:
+            return topic
+        content = unicodedata.normalize("NFKC", str(message.get("content", "")))
+        for topic, _, _, problem, hint in known:
+            if (
+                unicodedata.normalize("NFKC", problem) in content
+                and unicodedata.normalize("NFKC", hint) in content
+            ):
+                return topic
     return None
 
 
@@ -324,6 +378,13 @@ def _exercise_answer(topic: str, problem: str, hint: str, language: str) -> str:
         f"**{labels[topic]}**\n{problem}\n\n**\u63d0\u793a**\n{hint} [1]\n\n"
         "\u8bf7\u5199\u51fa\u63a8\u5bfc\u8fc7\u7a0b\u540e\u53d1\u6765\uff0c\u6211\u4f1a\u68c0\u67e5\u6b65\u9aa4\uff0c\u7b54\u6848\u6682\u4e0d\u5c55\u793a\u3002"
     )
+
+
+def _public_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {**item, "role": "tutor" if item.get("role") == "assistant" else item.get("role")}
+        for item in history or []
+    ]
 
 
 def _invalid_local_template_response(query: str, history: list[dict[str, str]], summary: str, language: str) -> dict:
@@ -391,7 +452,7 @@ def _topic_clarification(query: str, history: list[dict[str, str]], summary: str
             "intent": "clarification",
             "sources": [],
             "validation_passed": True,
-            "conversation_history": [*(history or []), {"role": "student", "content": query}, {"role": "tutor", "content": answer}],
+            "conversation_history": [*_public_history(history), {"role": "student", "content": query}, {"role": "tutor", "content": answer}],
             "conversation_summary": summary,
             "clarification": {"missing": [missing]},
             "metrics": {"tool_calls": 0},
@@ -1094,7 +1155,7 @@ def _base_response(query: str, answer: str, history: list[dict[str, str]], summa
         "trace_id": str(uuid.uuid4()),
         "sources": [dict(CORE_SOURCE)],
         "conversation_history": [
-            *(history or []),
+            *_public_history(history),
             {"role": "student", "content": query},
             {"role": "tutor", "content": answer},
         ],

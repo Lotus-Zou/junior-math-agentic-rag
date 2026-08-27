@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentic_rag.domain.schemas import CriticOutput, CurriculumSolveOutput, ResponseEnvelope
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.errors import PipelineError
 from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -176,8 +177,9 @@ class PipelineExecutor:
                 merged["contexts"] = dump["candidates"]
             if "answer" in dump:
                 merged["answer"] = dump["answer"]
-            if "passed" in dump:
-                merged["validation_passed"] = dump["passed"]
+        render_contract = self._trusted_render_contract(state) if ref.startswith("math.response_render") else None
+        if render_contract is not None:
+            merged.update(render_contract)
         fields = manifest.input_model.model_fields
         projected = {name: merged[name] for name in fields if name in merged}
         if ref.startswith("math.answer_critic") and projected.get("contexts"):
@@ -197,12 +199,28 @@ class PipelineExecutor:
                 else item
                 for item in projected["sources"]
             ]
-        if ref.startswith("math.response_render") and "response_type" not in projected:
-            projected["response_type"] = (
-                "verified_answer"
-                if projected.get("validation_passed") is True
-                else "clarification_required"
-            )
         if "query" in fields and "query" not in projected and merged.get("rewritten_query"):
             projected["query"] = merged["rewritten_query"]
         return projected
+
+    @staticmethod
+    def _trusted_render_contract(state: dict[str, Any]) -> dict[str, Any] | None:
+        for value in reversed(list(state.values())):
+            if isinstance(value, CurriculumSolveOutput) and value.response is not None:
+                return {
+                    "response_type": value.response.response_type,
+                    "validation_passed": value.response.validation_passed,
+                }
+            if isinstance(value, ResponseEnvelope):
+                return {
+                    "response_type": value.response_type,
+                    "validation_passed": value.validation_passed,
+                }
+            if isinstance(value, CriticOutput):
+                return {
+                    "response_type": (
+                        "verified_answer" if value.passed else "clarification_required"
+                    ),
+                    "validation_passed": value.passed,
+                }
+        return None

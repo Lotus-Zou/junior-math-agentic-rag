@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class StrictModel(BaseModel):
@@ -200,13 +200,13 @@ class CurriculumSolveOutput(StrictModel):
 
 class RenderInput(StrictModel):
     answer: str
-    response_type: ResponseType | None = None
+    response_type: ResponseType
     language: Literal["zh", "en"] = "zh"
     trace_id: str = ""
     intent: str = ""
     knowledge_points: list[str] = Field(default_factory=list)
     sources: list[PublicSource] = Field(default_factory=list)
-    validation_passed: bool = True
+    validation_passed: StrictBool
     conversation_history: list[PublicConversationTurn] = Field(default_factory=list)
     conversation_summary: str = ""
     exercise_state: PublicExerciseState | None = None

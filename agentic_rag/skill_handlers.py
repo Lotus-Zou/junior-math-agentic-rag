@@ -183,11 +183,31 @@ def memory_commit(data: MemoryInput, _context) -> MemoryOutput:
 
 
 def response_render(data: RenderInput, _context) -> AnswerEnvelope:
-    response_type = data.response_type or (
-        "verified_answer" if data.validation_passed else "clarification_required"
-    )
+    payload = data.model_dump(exclude={"response_type", "language"})
+    response_type = data.response_type
+    if data.validation_passed is not True:
+        response_type = "clarification_required"
+        payload.update(
+            answer=(
+                "I could not verify that draft. Please share the full problem or the step you want checked, and I will help you work through it."
+                if data.language == "en"
+                else "这份草稿未通过核对。请补充完整题目或需要检查的步骤，我会帮你继续推导。"
+            ),
+            intent="clarification",
+            knowledge_points=[],
+            sources=[],
+            exercise_state=None,
+            cached=False,
+            clarification={
+                "missing": [
+                    "the full problem or the step to check"
+                    if data.language == "en"
+                    else "完整题目或需要检查的步骤"
+                ]
+            },
+        )
     return AnswerEnvelope(
-        **data.model_dump(exclude={"response_type", "language"}),
+        **payload,
         response_type=response_type,
         language=data.language,
     )

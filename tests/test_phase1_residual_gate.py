@@ -2,12 +2,38 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import agentic_rag.fast_path as fast_path
 import agentic_rag.response_contract as response_contract
 import app as api
+from agentic_rag.domain.schemas import (
+    AnswerDraftOutput,
+    CriticOutput,
+    CurriculumSolveOutput,
+    RenderInput,
+    ResponseEnvelope,
+)
+from agentic_rag.skill_handlers import response_render
+from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
+from agentic_rag.skill_runtime.executor import SkillExecutor
+from agentic_rag.skill_runtime.pipeline import PipelineExecutor
+from agentic_rag.skill_runtime.registry import get_default_registry
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _render_context(name: str = "residual-render") -> SkillContext:
+    return SkillContext(
+        request_id=name,
+        trace_id=name,
+        deadline_at=datetime.now(timezone.utc) + timedelta(seconds=8),
+    )
 
 
 def _verified_cache_record(answer: str, query: str) -> tuple[dict, api.AskRequest]:
@@ -427,3 +453,216 @@ def test_guided_cache_exact_public_private_binding_round_trips():
     assert public_state["topic"] == private_state["topic"]
     assert public_state["fingerprint"] == private_state["public_fingerprint"]
     assert api._cached_response(record, request)["response_type"] == "guided_exercise"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"answer": "answer-only draft"},
+        {"answer": "typed but unvalidated draft", "response_type": "verified_answer"},
+        {"answer": "validated but untyped draft", "validation_passed": True},
+        {
+            "answer": "non-boolean validation",
+            "response_type": "verified_answer",
+            "validation_passed": 1,
+        },
+    ],
+)
+def test_render_input_requires_explicit_response_type_and_validation(payload):
+    with pytest.raises(ValidationError):
+        RenderInput.model_validate(payload)
+
+
+def test_pipeline_answer_only_draft_cannot_become_verified():
+    registry = get_default_registry()
+    runner = PipelineExecutor(SkillExecutor(registry))
+    projected = runner._project_input(
+        "math.response_render@1",
+        {"answer_generate": AnswerDraftOutput(answer="unreviewed draft")},
+        {"query": "uncovered problem", "language": "en"},
+        None,
+    )
+
+    assert "response_type" not in projected
+    assert "validation_passed" not in projected
+    rendered = runner.skills.execute(
+        "math.response_render@1", projected, _render_context("answer-only")
+    )
+    assert rendered.status == SkillStatus.FATAL_ERROR
+    assert rendered.value is None
+
+
+@pytest.mark.parametrize(
+    "declared_type",
+    [
+        "verified_answer",
+        "guided_exercise",
+        "clarification_required",
+        "supported_refusal",
+    ],
+)
+def test_renderer_replaces_rejected_draft_with_safe_teaching_copy(declared_type):
+    rejected = "REJECTED DRAFT: x = 999"
+
+    rendered = response_render(
+        RenderInput(
+            answer=rejected,
+            response_type=declared_type,
+            validation_passed=False,
+            language="en",
+        ),
+        _render_context("rejected-draft"),
+    )
+
+    assert rendered.response_type == "clarification_required"
+    assert rendered.validation_passed is False
+    assert rejected not in rendered.answer
+    assert rendered.answer
+
+
+@pytest.mark.parametrize(
+    "response_type",
+    [
+        "verified_answer",
+        "guided_exercise",
+        "clarification_required",
+        "supported_refusal",
+    ],
+)
+def test_pipeline_preserves_typed_curriculum_response_type(response_type):
+    registry = get_default_registry()
+    runner = PipelineExecutor(SkillExecutor(registry))
+    upstream = CurriculumSolveOutput(
+        handled=True,
+        response=ResponseEnvelope(
+            response_type=response_type,
+            answer=f"safe {response_type}",
+            validation_passed=True,
+        ),
+    )
+
+    projected = runner._project_input(
+        "math.response_render@1",
+        {"curriculum_solve": upstream},
+        {"query": "typed response", "language": "en"},
+        None,
+    )
+    rendered = runner.skills.execute(
+        "math.response_render@1", projected, _render_context(response_type)
+    )
+
+    assert rendered.status == SkillStatus.OK
+    assert rendered.value.response_type == response_type
+    assert rendered.value.answer == f"safe {response_type}"
+
+
+def test_failed_typed_critic_does_not_publish_answer_draft():
+    registry = get_default_registry()
+    runner = PipelineExecutor(SkillExecutor(registry))
+    rejected = "critic rejected this algebra draft"
+    critic = CriticOutput(
+        passed=False,
+        factual_faithfulness=False,
+        math_logic_valid=False,
+        issues=["incorrect"],
+    )
+    projected = runner._project_input(
+        "math.response_render@1",
+        {
+            "answer_generate": AnswerDraftOutput(answer=rejected),
+            "answer_critic": critic,
+        },
+        {"query": "uncovered problem", "language": "en"},
+        None,
+    )
+
+    assert projected["response_type"] == "clarification_required"
+    assert projected["validation_passed"] is False
+    rendered = runner.skills.execute(
+        "math.response_render@1", projected, _render_context("critic-rejected")
+    )
+    assert rendered.status == SkillStatus.OK
+    assert rendered.value.response_type == "clarification_required"
+    assert rejected not in rendered.value.answer
+
+
+@pytest.mark.parametrize("command", ["再来一道", "难一点", "简单一点"])
+def test_student_topic_keywords_never_override_latest_tutor_exercise(command):
+    geometry = fast_path.build_fast_response("几何", [], language="zh")
+    history = [
+        *geometry["conversation_history"],
+        {
+            "role": "student",
+            "content": "**代数练习**\n我在代数里想到 3x - 4 = 11，但这只是对几何题的尝试。",
+            "exercise_state": fast_path.build_fast_response(
+                "代数", [], language="zh"
+            )["exercise_state"],
+        },
+    ]
+
+    result = fast_path.build_fast_response(command, history, language="zh")
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["exercise_state"]["topic"] == "geometry"
+
+
+def test_tampered_public_exercise_state_is_not_trusted():
+    algebra = fast_path.build_fast_response("代数", [], language="zh")
+    geometry = fast_path.build_fast_response("几何", [], language="zh")
+    tampered_state = {**geometry["exercise_state"], "fingerprint": "0" * 64}
+    history = [
+        *algebra["conversation_history"],
+        {
+            "role": "assistant",
+            "content": "请继续上一道练习。",
+            "exercise_state": tampered_state,
+        },
+    ]
+
+    result = fast_path.build_fast_response("再来一道", history, language="zh")
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["exercise_state"]["topic"] == "algebra"
+
+
+def test_latest_trusted_tutor_exercise_wins_after_geometry_feedback():
+    algebra = fast_path.build_fast_response("代数", [], language="zh")
+    geometry = fast_path.build_fast_response(
+        "几何", [], language="zh"
+    )
+    history = [
+        *algebra["conversation_history"],
+        {"role": "student", "content": "代数 3x-4=11，我猜底角是 60°。"},
+        {
+            "role": "assistant",
+            "content": "请重新检查上一道练习的推导，题目类型不由学生文本决定。",
+            "exercise_state": geometry["exercise_state"],
+        },
+    ]
+
+    result = fast_path.build_fast_response("难一点", history, language="zh")
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["exercise_state"]["topic"] == "geometry"
+
+
+@pytest.mark.parametrize(
+    ("initial_query", "initial_language", "command", "command_language"),
+    [
+        ("geometry", "en", "再来一道", "zh"),
+        ("几何", "zh", "harder", "en"),
+    ],
+)
+def test_recent_exercise_topic_survives_language_switch(
+    initial_query, initial_language, command, command_language
+):
+    geometry = fast_path.build_fast_response(
+        initial_query, [], language=initial_language
+    )
+
+    result = fast_path.build_fast_response(
+        command, geometry["conversation_history"], language=command_language
+    )
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["exercise_state"]["topic"] == "geometry"
