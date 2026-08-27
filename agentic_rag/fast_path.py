@@ -447,21 +447,67 @@ def _linear_context(history: list[dict[str, str]]) -> str:
     return ""
 
 
-def _geometry_context(history: list[dict[str, str]], language: str):
+def _geometry_exercise_heading(language: str) -> tuple[str, str]:
+    if language == "en":
+        return "**Geometry exercise**", "**Hint**"
+    return "**几何练习**", "**提示**"
+
+
+def _parse_geometry_exercise_turn(content: str, language: str):
+    heading, hint_heading = _geometry_exercise_heading(language)
+    normalized = unicodedata.normalize("NFKC", content or "").replace("\r\n", "\n").strip()
+    if normalized.count(heading) != 1 or normalized.count(hint_heading) != 1:
+        return None
+    match = re.fullmatch(
+        rf"{re.escape(heading)}\n(?P<problem>[^\n]+)\n\n"
+        rf"{re.escape(hint_heading)}\n(?P<hint>[^\n]+) \[1\]"
+        r"(?:\n\n.*)?",
+        normalized,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        return None
+
     exercises = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
+    matches = []
+    rendered_exercises = []
+    for template in exercises:
+        try:
+            rendered = _render_geometry_template(template, language)
+        except (KeyError, TypeError, ValueError):
+            continue
+        normalized_problem = unicodedata.normalize("NFKC", rendered.problem)
+        normalized_hint = unicodedata.normalize("NFKC", rendered.hint)
+        rendered_exercises.append((template, normalized_problem, normalized_hint))
+        if (
+            match.group("problem") == normalized_problem
+            and match.group("hint") == normalized_hint
+        ):
+            matches.append((template, rendered))
+    if len(matches) != 1:
+        return None
+
+    template, rendered = matches[0]
+    if any(
+        candidate.template_id != template.template_id
+        and (candidate_problem in normalized or candidate_hint in normalized)
+        for candidate, candidate_problem, candidate_hint in rendered_exercises
+    ):
+        return None
+    private_state = _validate_geometry_template(template, language, rendered)
+    if private_state is None:
+        return None
+    return template, rendered, private_state
+
+
+def _geometry_context(history: list[dict[str, str]], language: str):
+    heading, _ = _geometry_exercise_heading(language)
     for message in reversed(history or []):
+        if message.get("role") != "tutor":
+            continue
         content = str(message.get("content", ""))
-        for exercise in exercises:
-            try:
-                rendered = _render_geometry_template(exercise, language)
-            except (KeyError, TypeError, ValueError):
-                continue
-            if rendered.problem in content:
-                private_state = _validate_geometry_template(
-                    exercise, language, rendered
-                )
-                if private_state is not None:
-                    return exercise, rendered, private_state
+        if heading in unicodedata.normalize("NFKC", content):
+            return _parse_geometry_exercise_turn(content, language)
     return None
 
 
@@ -647,29 +693,63 @@ def _validate_geometry_template(
     )
 
 
-def _contains_answer_negation(answer: str) -> bool:
+@dataclass(frozen=True)
+class AngleAssignmentClaim:
+    labels: tuple[str, ...]
+    value: float
+    affirmed: bool
+
+
+@dataclass(frozen=True)
+class AngleSequenceClaim:
+    values: tuple[int, int, int]
+    affirmed: bool
+
+
+@dataclass(frozen=True)
+class TriangleClassificationClaim:
+    classification: str
+    affirmed: bool
+
+
+@dataclass(frozen=True)
+class CongruenceClaim:
+    left: str
+    right: str
+    affirmed: bool
+
+
+def _claim_suffix_is_negative(answer: str, claim_end: int) -> bool:
+    clause_tail = re.split(r"[。.!?;；]", answer[claim_end:], maxsplit=1)[0]
     return bool(
-        re.search(
-            r"不是|不等于|不全等|≠|!=|\b(?:not|never|no|isn't|isnt|aren't|arent|"
-            r"doesn't|doesnt|don't|dont)\b",
-            answer,
+        re.match(
+            r"\s*(?:[,，:：]\s*)?(?:(?:(?:这|该)?(?:一)?(?:结论|说法|等式)?\s*)?"
+            r"(?:并非正确|并不正确|不正确|错误)|"
+            r"(?:is|are)\s+(?:false|incorrect|wrong|not\s+correct)(?:\b|$))",
+            clause_tail,
             flags=re.IGNORECASE,
         )
     )
 
 
-_ANGLE_LABEL = r"(?:∠\s*(?:acd|b|c)|angle\s+(?:acd|b|c)|\b(?:acd|b|c)\b)"
+_ANGLE_LABEL = r"(?:∠\s*(?:acd|b|c)|angles?\s+(?:acd|b|c)|\b(?:acd|b|c)\b)"
 
 
 def _angle_label(value: str) -> str:
-    return re.sub(r"∠|angle|\s", "", value, flags=re.IGNORECASE).lower()
+    return re.sub(r"∠|angles?|\s", "", value, flags=re.IGNORECASE).lower()
 
 
-def _angle_assignments(answer: str) -> dict[str, list[float]]:
-    assignments: dict[str, list[float]] = {}
+def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
+    claims: list[AngleAssignmentClaim] = []
 
-    def add(label: str, value: str) -> None:
-        assignments.setdefault(_angle_label(label), []).append(float(value))
+    def add(labels: tuple[str, ...], value: str, affirmed: bool, end: int) -> None:
+        claims.append(
+            AngleAssignmentClaim(
+                labels=tuple(_angle_label(label) for label in labels),
+                value=float(value),
+                affirmed=affirmed and not _claim_suffix_is_negative(answer, end),
+            )
+        )
 
     chain_pattern = re.compile(
         rf"(?P<first>{_ANGLE_LABEL})\s*=\s*(?P<second>{_ANGLE_LABEL})\s*=\s*"
@@ -677,46 +757,270 @@ def _angle_assignments(answer: str) -> dict[str, list[float]]:
         flags=re.IGNORECASE,
     )
     for match in chain_pattern.finditer(answer):
-        add(match.group("first"), match.group("value"))
-        add(match.group("second"), match.group("value"))
+        add(
+            (match.group("first"), match.group("second")),
+            match.group("value"),
+            True,
+            match.end(),
+        )
 
     grouped_pattern = re.compile(
         rf"(?P<first>{_ANGLE_LABEL})\s*(?:和|与|and)\s*(?P<second>{_ANGLE_LABEL})"
-        r"\s*(?:都|both)?\s*(?:=|为|是|are|equal)\s*"
+        r"\s*(?:都|both)?\s*(?P<operator>都不是|均不为|are\s+not|aren't|"
+        r"=|为|是|are|equal)\s*"
         r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
         flags=re.IGNORECASE,
     )
     for match in grouped_pattern.finditer(answer):
-        add(match.group("first"), match.group("value"))
-        add(match.group("second"), match.group("value"))
+        operator = re.sub(r"\s+", " ", match.group("operator").lower())
+        add(
+            (match.group("first"), match.group("second")),
+            match.group("value"),
+            operator not in {"都不是", "均不为", "are not", "aren't"},
+            match.end(),
+        )
 
     direct_pattern = re.compile(
-        rf"(?P<label>{_ANGLE_LABEL})\s*(?:=|为|是|equals?|is)\s*"
+        rf"(?P<label>{_ANGLE_LABEL})\s*(?P<operator>不等于|不是|≠|!=|"
+        r"is\s+not|isn't|does\s+not\s+equal|=|为|是|equals?|is)\s*"
         r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
         flags=re.IGNORECASE,
     )
     for match in direct_pattern.finditer(answer):
-        add(match.group("label"), match.group("value"))
-    return assignments
+        operator = re.sub(r"\s+", " ", match.group("operator").lower())
+        add(
+            (match.group("label"),),
+            match.group("value"),
+            operator
+            not in {"不等于", "不是", "≠", "!=", "is not", "isn't", "does not equal"},
+            match.end(),
+        )
+
+    base_angles_pattern = re.compile(
+        r"(?P<labels>两(?:个)?底角|两个底角|both\s+(?:the\s+)?base\s+angles)\s*"
+        r"(?P<operator>均不为|都不是|are\s+not|aren't|均为|都是|都为|为|是|are)\s*"
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
+        flags=re.IGNORECASE,
+    )
+    for match in base_angles_pattern.finditer(answer):
+        operator = re.sub(r"\s+", " ", match.group("operator").lower())
+        add(
+            ("b", "c"),
+            match.group("value"),
+            operator not in {"均不为", "都不是", "are not", "aren't"},
+            match.end(),
+        )
+    return claims
 
 
 def _expected_angle_assignments(
     answer: str, expected: dict[str, int]
 ) -> bool:
-    assignments = _angle_assignments(answer)
+    relevant_claims = [
+        claim
+        for claim in _angle_assignment_claims(answer)
+        if any(label in expected for label in claim.labels)
+    ]
+    if not relevant_claims or any(not claim.affirmed for claim in relevant_claims):
+        return False
+    assignments: dict[str, list[float]] = {label: [] for label in expected}
+    for claim in relevant_claims:
+        for label in claim.labels:
+            if label in expected:
+                assignments[label].append(claim.value)
     return all(
-        label in assignments
-        and assignments[label]
+        assignments[label]
         and all(value == expected_value for value in assignments[label])
         for label, expected_value in expected.items()
     )
+
+
+_DEGREE_VALUE = r"(?P<{name}>\d+(?:\.0+)?)\s*(?:°|degrees?)"
+
+
+def _angle_sequence_claims(answer: str) -> list[AngleSequenceClaim]:
+    patterns = (
+        re.compile(
+            r"(?:三个角|三个内角|三内角|各角|角度)(?:的度数)?\s*(?:分别)?\s*"
+            r"(?P<operator>不为|不是|为|是|=)\s*"
+            + _DEGREE_VALUE.format(name="first")
+            + r"\s*[、,，]\s*"
+            + _DEGREE_VALUE.format(name="second")
+            + r"\s*[、,，]\s*"
+            + _DEGREE_VALUE.format(name="third"),
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:the\s+)?(?:three\s+)?angles(?:\s+respectively)?\s*"
+            r"(?P<operator>are\s+not|aren't|are|measure)\s*(?:respectively\s+)?"
+            + _DEGREE_VALUE.format(name="first")
+            + r"\s*[,，]\s*"
+            + _DEGREE_VALUE.format(name="second")
+            + r"\s*(?:[,，]\s*(?:and\s+)?|and\s+)"
+            + _DEGREE_VALUE.format(name="third"),
+            flags=re.IGNORECASE,
+        ),
+    )
+    claims = []
+    for pattern in patterns:
+        for match in pattern.finditer(answer):
+            operator = re.sub(r"\s+", " ", match.group("operator").lower())
+            values = tuple(
+                int(float(match.group(name)))
+                for name in ("first", "second", "third")
+            )
+            claims.append(
+                AngleSequenceClaim(
+                    values=values,
+                    affirmed=operator not in {"不为", "不是", "are not", "aren't"}
+                    and not _claim_suffix_is_negative(answer, match.end()),
+                )
+            )
+    return claims
+
+
+def _classification_claims(answer: str) -> list[TriangleClassificationClaim]:
+    patterns = (
+        re.compile(
+            r"(?:(?:所以|因此|故)\s*)?(?:(?:该|这个|此)?三角形\s*)?"
+            r"(?P<operator>不是|并非|是|为)\s*(?P<classification>锐角|直角|钝角)三角形",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?:(?:the|this)\s+triangle|it)\s+"
+            r"(?P<operator>is\s+not|isn't|is)\s+(?:an?\s+)?"
+            r"(?P<classification>acute|right|obtuse)(?:\s+triangle)?",
+            flags=re.IGNORECASE,
+        ),
+    )
+    aliases = {
+        "锐角": "acute",
+        "直角": "right",
+        "钝角": "obtuse",
+        "acute": "acute",
+        "right": "right",
+        "obtuse": "obtuse",
+    }
+    claims = []
+    for pattern in patterns:
+        for match in pattern.finditer(answer):
+            operator = re.sub(r"\s+", " ", match.group("operator").lower())
+            claims.append(
+                TriangleClassificationClaim(
+                    classification=aliases[match.group("classification").lower()],
+                    affirmed=operator not in {"不是", "并非", "is not", "isn't"}
+                    and not _claim_suffix_is_negative(answer, match.end()),
+                )
+            )
+    return claims
+
+
+_TRIANGLE_NAME = r"(?:△\s*|triangle\s+)?[a-z]{3}"
+
+
+def _triangle_name(value: str) -> str:
+    return re.sub(r"△|triangle|\s", "", value, flags=re.IGNORECASE).lower()
+
+
+def _congruence_claims(answer: str) -> list[CongruenceClaim]:
+    patterns = (
+        re.compile(
+            rf"(?P<left>{_TRIANGLE_NAME})\s*(?P<operator>不全等于?|全等于?|≌|"
+            r"is\s+not\s+congruent\s+to|isn't\s+congruent\s+to|"
+            rf"is\s+congruent\s+to)\s*(?P<right>{_TRIANGLE_NAME})",
+            flags=re.IGNORECASE,
+        ),
+        re.compile(
+            rf"(?P<left>{_TRIANGLE_NAME})\s*(?:与|和)\s*(?P<right>{_TRIANGLE_NAME})\s*"
+            r"(?P<operator>不全等|全等)",
+            flags=re.IGNORECASE,
+        ),
+    )
+    claims = []
+    for pattern in patterns:
+        for match in pattern.finditer(answer):
+            operator = re.sub(r"\s+", " ", match.group("operator").lower())
+            claims.append(
+                CongruenceClaim(
+                    left=_triangle_name(match.group("left")),
+                    right=_triangle_name(match.group("right")),
+                    affirmed=operator
+                    not in {"不全等", "不全等于", "is not congruent to", "isn't congruent to"}
+                    and not _claim_suffix_is_negative(answer, match.end()),
+                )
+            )
+    return claims
+
+
+def _angle_ratio_answer_is_correct(
+    template: GeometryExerciseTemplate, answer: str
+) -> bool:
+    parameters = dict(template.parameters)
+    ratio = [parameters[key] for key in ("first", "second", "third")]
+    unit = 180 // sum(ratio)
+    expected_angles = tuple(item * unit for item in ratio)
+    expected_classification = (
+        "acute"
+        if max(expected_angles) < 90
+        else "right"
+        if max(expected_angles) == 90
+        else "obtuse"
+    )
+    angle_claims = _angle_sequence_claims(answer)
+    classification_claims = _classification_claims(answer)
+    return (
+        bool(angle_claims)
+        and bool(classification_claims)
+        and all(
+            claim.affirmed and claim.values == expected_angles
+            for claim in angle_claims
+        )
+        and all(
+            claim.affirmed and claim.classification == expected_classification
+            for claim in classification_claims
+        )
+    )
+
+
+def _sas_answer_is_correct(answer: str) -> bool:
+    claims = _congruence_claims(answer)
+    expected_triangles = {"abc", "def"}
+    if not claims or any(
+        not claim.affirmed or {claim.left, claim.right} != expected_triangles
+        for claim in claims
+    ):
+        return False
+    criterion_ok = bool(
+        re.search(
+            r"边角边|\bsas\b|\bside(?:-|\s+)angle(?:-|\s+)side\b",
+            answer,
+            flags=re.IGNORECASE,
+        )
+    )
+    criterion_negated = bool(
+        re.search(
+            r"(?:不是|并非)\s*边角边|边角边\s*(?:并非正确|不正确|错误)|"
+            r"\bnot\s+(?:sas|side(?:-|\s+)angle(?:-|\s+)side)\b|"
+            r"\bsas\s+(?:is\s+)?(?:false|incorrect|not\s+correct)\b",
+            answer,
+            flags=re.IGNORECASE,
+        )
+    )
+    contradictory_criterion = bool(
+        re.search(
+            r"边边边|角边角|角角边|\b(?:sss|asa|aas|rhs|hl)\b",
+            answer,
+            flags=re.IGNORECASE,
+        )
+    )
+    return criterion_ok and not criterion_negated and not contradictory_criterion
 
 
 def _geometry_answer_is_correct(
     template: GeometryExerciseTemplate, student_answer: str, language: str
 ) -> bool:
     normalized = unicodedata.normalize("NFKC", student_answer or "").strip().lower()
-    if not normalized or _contains_answer_negation(normalized):
+    if not normalized:
         return False
     try:
         rendered = _render_geometry_template(template, language)
@@ -736,47 +1040,9 @@ def _geometry_answer_is_correct(
             normalized, {"b": 90 - parameters["angle_a"], "acd": 45}
         )
     if template.validator_kind == "angle_ratio":
-        ratio = [parameters[key] for key in ("first", "second", "third")]
-        unit = 180 // sum(ratio)
-        expected_angles = sorted(item * unit for item in ratio)
-        claimed_angles = [
-            int(value)
-            for value in re.findall(r"(\d+)\s*(?:°|degrees?)", normalized)
-        ]
-        if len(claimed_angles) < 3 or sorted(claimed_angles[-3:]) != expected_angles:
-            return False
-        classifications = {
-            "acute": bool(re.search(r"锐角|\bacute\b", normalized)),
-            "right": bool(re.search(r"直角三角形|\bright(?:-angled)?\s+triangle\b", normalized)),
-            "obtuse": bool(re.search(r"钝角|\bobtuse\b", normalized)),
-        }
-        expected_classification = (
-            "acute" if max(expected_angles) < 90 else "right" if max(expected_angles) == 90 else "obtuse"
-        )
-        return classifications[expected_classification] and not any(
-            present
-            for classification, present in classifications.items()
-            if classification != expected_classification
-        )
+        return _angle_ratio_answer_is_correct(template, normalized)
     if template.validator_kind == "sas":
-        compact = re.sub(r"\s+", "", normalized)
-        relation_ok = (
-            "△abc≌△def" in compact
-            or "abc≌def" in compact
-            or bool(re.search(r"abc(?:与|和)def(?:全等|是全等)", compact))
-            or bool(
-                re.search(
-                    r"(?:triangle\s+)?abc\s+(?:is\s+)?congruent\s+to\s+"
-                    r"(?:triangle\s+)?def",
-                    normalized,
-                )
-            )
-        )
-        criterion_ok = "边角边" in normalized or bool(re.search(r"\bsas\b", normalized))
-        contradictory_criterion = bool(
-            re.search(r"边边边|角边角|角角边|\b(?:sss|asa|aas|rhs|hl)\b", normalized)
-        )
-        return relation_ok and criterion_ok and not contradictory_criterion
+        return _sas_answer_is_correct(normalized)
     return False
 
 
