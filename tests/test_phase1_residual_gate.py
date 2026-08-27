@@ -191,6 +191,82 @@ def test_isosceles_claim_parser_rejects_scoped_negative_assignments(student_answ
 
 
 @pytest.mark.parametrize(
+    ("template_index", "student_answer", "language"),
+    [
+        (
+            0,
+            "It is false that B = 70 degrees and C = 70 degrees.",
+            "en",
+        ),
+        (0, "错误的是：B = 70°，C = 70°。", "zh"),
+        (
+            1,
+            "It is false that the angles are 40 degrees, 60 degrees, and "
+            "80 degrees, and the triangle is acute.",
+            "en",
+        ),
+        (
+            1,
+            "错误的是：三个角分别为40°、60°、80°，所以是锐角三角形。",
+            "zh",
+        ),
+        (
+            2,
+            "It is false that triangle ABC is congruent to triangle DEF by SAS.",
+            "en",
+        ),
+        (2, "错误的是：△ABC ≌ △DEF，依据边角边。", "zh"),
+    ],
+)
+def test_geometry_claim_parser_rejects_scoped_negative_prefix(
+    template_index, student_answer, language
+):
+    assert not fast_path._geometry_answer_is_correct(
+        fast_path.ZH_GEOMETRY_EXERCISES[template_index],
+        student_answer,
+        language,
+    )
+
+
+@pytest.mark.parametrize(
+    ("template_index", "student_answer", "language"),
+    [
+        (
+            0,
+            "It is correct that B = 70 degrees and C = 70 degrees.",
+            "en",
+        ),
+        (0, "正确的是：B = 70°，C = 70°。", "zh"),
+        (
+            1,
+            "It is correct that the angles are 40 degrees, 60 degrees, and "
+            "80 degrees, and the triangle is acute.",
+            "en",
+        ),
+        (
+            1,
+            "正确的是：三个角分别为40°、60°、80°，所以是锐角三角形。",
+            "zh",
+        ),
+        (
+            2,
+            "It is correct that triangle ABC is congruent to triangle DEF by SAS.",
+            "en",
+        ),
+        (2, "正确的是：△ABC ≌ △DEF，依据边角边。", "zh"),
+    ],
+)
+def test_geometry_claim_parser_accepts_positive_prefix_control(
+    template_index, student_answer, language
+):
+    assert fast_path._geometry_answer_is_correct(
+        fast_path.ZH_GEOMETRY_EXERCISES[template_index],
+        student_answer,
+        language,
+    )
+
+
+@pytest.mark.parametrize(
     ("student_answer", "language"),
     [
         ("两底角均为 70°。", "zh"),

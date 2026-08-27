@@ -732,6 +732,32 @@ def _claim_suffix_is_negative(answer: str, claim_end: int) -> bool:
     )
 
 
+def _claim_prefix_is_negative(answer: str, claim_start: int) -> bool:
+    clause_prefix = re.split(r"[。.!?;；]", answer[:claim_start])[-1]
+    english_polarity = r"(?:false|incorrect|wrong|not\s+correct)"
+    return bool(
+        re.search(
+            rf"(?:"
+            rf"(?:it|this|that)\s+is\s+{english_polarity}\s+that\s*|"
+            rf"(?:(?:the\s+)?(?:following|claim|statement|conclusion)\s+is\s+"
+            rf"{english_polarity}|{english_polarity})\s*[:：]\s*|"
+            r"(?:错误|不正确)(?:的)?(?:结论|说法|等式)?\s*是\s*[:：]?\s*|"
+            r"(?:该|这个|此)?(?:结论|说法|等式)\s*(?:是|为)\s*"
+            r"(?:错误|不正确)(?:的)?\s*[:：]?\s*"
+            r")$",
+            clause_prefix,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _claim_is_negative(answer: str, claim_start: int, claim_end: int) -> bool:
+    return (
+        _claim_prefix_is_negative(answer, claim_start)
+        or _claim_suffix_is_negative(answer, claim_end)
+    )
+
+
 _ANGLE_LABEL = r"(?:∠\s*(?:acd|b|c)|angles?\s+(?:acd|b|c)|\b(?:acd|b|c)\b)"
 
 
@@ -742,12 +768,18 @@ def _angle_label(value: str) -> str:
 def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
     claims: list[AngleAssignmentClaim] = []
 
-    def add(labels: tuple[str, ...], value: str, affirmed: bool, end: int) -> None:
+    def add(
+        labels: tuple[str, ...],
+        value: str,
+        affirmed: bool,
+        start: int,
+        end: int,
+    ) -> None:
         claims.append(
             AngleAssignmentClaim(
                 labels=tuple(_angle_label(label) for label in labels),
                 value=float(value),
-                affirmed=affirmed and not _claim_suffix_is_negative(answer, end),
+                affirmed=affirmed and not _claim_is_negative(answer, start, end),
             )
         )
 
@@ -761,6 +793,7 @@ def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
             (match.group("first"), match.group("second")),
             match.group("value"),
             True,
+            match.start(),
             match.end(),
         )
 
@@ -777,6 +810,7 @@ def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
             (match.group("first"), match.group("second")),
             match.group("value"),
             operator not in {"都不是", "均不为", "are not", "aren't"},
+            match.start(),
             match.end(),
         )
 
@@ -793,6 +827,7 @@ def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
             match.group("value"),
             operator
             not in {"不等于", "不是", "≠", "!=", "is not", "isn't", "does not equal"},
+            match.start(),
             match.end(),
         )
 
@@ -808,6 +843,7 @@ def _angle_assignment_claims(answer: str) -> list[AngleAssignmentClaim]:
             ("b", "c"),
             match.group("value"),
             operator not in {"均不为", "都不是", "are not", "aren't"},
+            match.start(),
             match.end(),
         )
     return claims
@@ -873,7 +909,9 @@ def _angle_sequence_claims(answer: str) -> list[AngleSequenceClaim]:
                 AngleSequenceClaim(
                     values=values,
                     affirmed=operator not in {"不为", "不是", "are not", "aren't"}
-                    and not _claim_suffix_is_negative(answer, match.end()),
+                    and not _claim_is_negative(
+                        answer, match.start(), match.end()
+                    ),
                 )
             )
     return claims
@@ -909,7 +947,9 @@ def _classification_claims(answer: str) -> list[TriangleClassificationClaim]:
                 TriangleClassificationClaim(
                     classification=aliases[match.group("classification").lower()],
                     affirmed=operator not in {"不是", "并非", "is not", "isn't"}
-                    and not _claim_suffix_is_negative(answer, match.end()),
+                    and not _claim_is_negative(
+                        answer, match.start(), match.end()
+                    ),
                 )
             )
     return claims
@@ -946,7 +986,9 @@ def _congruence_claims(answer: str) -> list[CongruenceClaim]:
                     right=_triangle_name(match.group("right")),
                     affirmed=operator
                     not in {"不全等", "不全等于", "is not congruent to", "isn't congruent to"}
-                    and not _claim_suffix_is_negative(answer, match.end()),
+                    and not _claim_is_negative(
+                        answer, match.start(), match.end()
+                    ),
                 )
             )
     return claims
