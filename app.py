@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from agentic_rag import memory
 from agentic_rag.cache import answer_cache
+from agentic_rag.exercises.models import PublicExerciseState as AdaptiveExerciseState
 from agentic_rag.graph import build_graph
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.metrics import FEEDBACK, observe_state
@@ -77,6 +78,7 @@ class AskRequest(BaseModel):
     language: Literal["zh", "en"] = "zh"
     conversation_history: list[dict[str, str]] = Field(default_factory=list, max_length=24)
     conversation_summary: str = ""
+    exercise_state: AdaptiveExerciseState | None = None
 
     @field_validator("query")
     @classmethod
