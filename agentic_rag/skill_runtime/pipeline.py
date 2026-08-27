@@ -189,15 +189,20 @@ class PipelineExecutor:
             projected["sources"] = [
                 {
                     "chunk_id": item.get("chunk_id"),
-                    "content": item.get("content", ""),
-                    "metadata": item.get("metadata", item),
                     "source": item.get("source", ""),
-                    "score": item.get("score", 0.0),
+                    "chapter": item.get("chapter") or item.get("metadata", {}).get("chapter"),
+                    "rank": item.get("rank") or item.get("metadata", {}).get("rank"),
                 }
                 if isinstance(item, dict)
                 else item
                 for item in projected["sources"]
             ]
+        if ref.startswith("math.response_render") and "response_type" not in projected:
+            projected["response_type"] = (
+                "verified_answer"
+                if projected.get("validation_passed") is True
+                else "clarification_required"
+            )
         if "query" in fields and "query" not in projected and merged.get("rewritten_query"):
             projected["query"] = merged["rewritten_query"]
         return projected

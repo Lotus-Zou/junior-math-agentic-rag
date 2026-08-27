@@ -4,6 +4,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agentic_rag.domain.schemas import CurriculumSolveOutput
+from agentic_rag.response_contract import (
+    private_exercise_payload,
+    response_validation_digest,
+    validated_exercise_state,
+)
 from agentic_rag.skill_runtime.contracts import SkillResult, SkillStatus
 
 import app as api
@@ -36,8 +41,11 @@ def _writer_cache_record(response_type="verified_answer"):
     hidden = response_type == "guided_exercise"
     contract = {
         "validation_evidence": {"kind": "deterministic", "passed": True},
-        "exercise_answer_hidden": hidden,
     }
+    if hidden:
+        contract["private_exercise_state"] = private_exercise_payload(
+            validated_exercise_state("cache-exercise", "algebra", "x = 2", "x = 2")
+        )
     request = api.AskRequest(query="缓存验证", language="zh")
     public = api._public_response(
         {
@@ -108,12 +116,19 @@ def test_graph_success_is_normalized_before_returning_from_ask(client, monkeypat
         def invoke(self, *_args, **_kwargs):
             return {
                 "response": "x = 4",
+                "draft_response": "x = 4",
+                "response_type": "verified_answer",
                 "trace_id": "graph-trace",
                 "intent": "solve",
                 "knowledge_points": ["一元一次方程"],
                 "documents": [],
                 "validation_passed": True,
-                "critic_report": {"is_valid": True, "validation_mode": "local_sympy"},
+                "critic_report": {
+                    "is_valid": True,
+                    "validation_mode": "local_sympy",
+                    "deterministic": {"passed": True},
+                    "validated_response_sha256": response_validation_digest("x = 4"),
+                },
                 "conversation_history": [],
                 "conversation_summary": "",
                 "metrics": {"tool_calls": 0},
@@ -350,8 +365,12 @@ def test_cache_records_outside_writer_schema_fail_closed(client, monkeypatch, ca
         lambda cached: cached["contract"]["validation_evidence"].update({"kind": "forged"}),
         lambda cached: cached["contract"]["validation_evidence"].update({"passed": False}),
         lambda cached: cached["contract"]["validation_evidence"].update({"passed": 1}),
-        lambda cached: cached["contract"].update({"exercise_answer_hidden": 0}),
-        lambda cached: cached["contract"].update({"exercise_answer_hidden": True}),
+        lambda cached: cached["contract"].update({"private_exercise_state": []}),
+        lambda cached: cached["contract"].update({
+            "private_exercise_state": private_exercise_payload(
+                validated_exercise_state("cache-injected", "algebra", "x = 2", "x = 2")
+            )
+        }),
         lambda cached: cached["public"].update({"forged": True}),
         lambda cached: cached["public"].pop("trace_id"),
         lambda cached: cached["public"].update({"validation_passed": 1}),

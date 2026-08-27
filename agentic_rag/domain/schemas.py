@@ -52,11 +52,6 @@ class CurriculumSolveInput(QueryInput):
     conversation_history: list[dict[str, str]] = Field(default_factory=list)
 
 
-class CurriculumSolveOutput(StrictModel):
-    handled: bool
-    response: dict[str, Any] | None = None
-
-
 class RetrievalInput(StrictModel):
     query: str = Field(min_length=1, max_length=12000)
     sub_queries: list[str] = Field(default_factory=list)
@@ -144,32 +139,81 @@ class MemoryOutput(StrictModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 
-class RenderInput(StrictModel):
-    answer: str
-    language: Literal["zh", "en"] = "zh"
-    sources: list[RetrievalCandidate] = Field(default_factory=list)
-    validation_passed: bool = True
+ResponseType = Literal[
+    "verified_answer",
+    "guided_exercise",
+    "clarification_required",
+    "supported_refusal",
+]
+
+
+class PublicSource(StrictModel):
+    chunk_id: str | None = None
+    source: str = ""
+    chapter: str | None = None
+    rank: int | float | None = None
+
+
+class PublicConversationTurn(StrictModel):
+    role: Literal["student", "tutor"]
+    content: str
+
+
+class PublicExerciseState(StrictModel):
+    topic: str = ""
+    difficulty_delta: int = 0
+    difficulty: int | None = None
+    exercise_type: str | None = None
+    template_id: str | None = None
+
+
+class PublicClarification(StrictModel):
+    missing: list[str] = Field(default_factory=list)
+
+
+class PublicMetrics(StrictModel):
+    tool_calls: int | float | None = None
+    latency_ms: int | float | None = None
 
 
 class ResponseEnvelope(StrictModel):
-    response_type: Literal["verified_answer", "guided_exercise", "clarification_required", "supported_refusal"]
+    response_type: ResponseType
     answer: str = ""
     trace_id: str = ""
     intent: str = ""
     knowledge_points: list[str] = Field(default_factory=list)
-    sources: list[Any] = Field(default_factory=list)
+    sources: list[PublicSource] = Field(default_factory=list)
     validation_passed: bool = False
-    conversation_history: list[dict[str, str]] = Field(default_factory=list)
+    conversation_history: list[PublicConversationTurn] = Field(default_factory=list)
     conversation_summary: str = ""
-    exercise_state: Any = None
-    clarification: dict[str, Any] | None = None
-    metrics: dict[str, Any] = Field(default_factory=dict)
+    exercise_state: PublicExerciseState | None = None
+    clarification: PublicClarification | None = None
+    metrics: PublicMetrics = Field(default_factory=PublicMetrics)
     cached: bool = False
 
 
-class AnswerEnvelope(StrictModel):
+class CurriculumSolveOutput(StrictModel):
+    handled: bool
+    response: ResponseEnvelope | None = None
+
+
+class RenderInput(StrictModel):
     answer: str
+    response_type: ResponseType | None = None
     language: Literal["zh", "en"] = "zh"
-    sources: list[RetrievalCandidate] = Field(default_factory=list)
-    validation_passed: bool
+    trace_id: str = ""
+    intent: str = ""
+    knowledge_points: list[str] = Field(default_factory=list)
+    sources: list[PublicSource] = Field(default_factory=list)
+    validation_passed: bool = True
+    conversation_history: list[PublicConversationTurn] = Field(default_factory=list)
+    conversation_summary: str = ""
+    exercise_state: PublicExerciseState | None = None
+    clarification: PublicClarification | None = None
+    metrics: PublicMetrics = Field(default_factory=PublicMetrics)
+    cached: bool = False
+
+
+class AnswerEnvelope(ResponseEnvelope):
+    language: Literal["zh", "en"] = "zh"
 

@@ -79,9 +79,10 @@ class ProductHardeningTests(unittest.TestCase):
                     result = build_fast_response(query, [], language="en")
 
                 self.assertNotEqual(result["response_type"], "guided_exercise")
-                self.assertEqual(result["response_type"], "supported_refusal")
+                self.assertEqual(result["response_type"], "clarification_required")
                 self.assertNotIn("validation_evidence", result)
                 self.assertNotIn("hidden_answer", str(result).lower())
+                self.assertNotIn("local_template_validation_failed", str(result))
     def test_difficulty_adjustment_without_exercise_requires_a_topic(self):
         result = build_fast_response("\u96be\u4e00\u70b9", [], language="zh")
 
@@ -108,7 +109,8 @@ class ProductHardeningTests(unittest.TestCase):
 
     def test_reported_linear_function_timeout_case_is_local_and_correct(self):
         result = build_fast_response("一次函数 y = -2x + 3 的斜率和截距分别是什么？图像大致怎么画？", [])
-        self.assertEqual(result["critic_report"]["validation_mode"], "local_curriculum")
+        self.assertEqual(result["response_type"], "verified_answer")
+        self.assertNotIn("critic_report", result)
         self.assertIn("斜率 k = -2", result["answer"])
         self.assertIn("截距 b = 3", result["answer"])
         self.assertIn("(0, 3)", result["answer"])
@@ -122,7 +124,8 @@ class ProductHardeningTests(unittest.TestCase):
             language="en",
         )
         self.assertIsNotNone(result)
-        self.assertEqual(result["critic_report"]["validation_mode"], "local_curriculum")
+        self.assertEqual(result["response_type"], "verified_answer")
+        self.assertNotIn("critic_report", result)
         self.assertIn("k = -2 and b = 3", result["answer"])
         self.assertIn("(0, 3)", result["answer"])
         self.assertEqual(result["metrics"]["tool_calls"], 0)
@@ -134,7 +137,8 @@ class ProductHardeningTests(unittest.TestCase):
             language="zh",
         )
         self.assertIsNotNone(result)
-        self.assertEqual(result["critic_report"]["validation_mode"], "local_curriculum")
+        self.assertEqual(result["response_type"], "verified_answer")
+        self.assertNotIn("critic_report", result)
         self.assertIn("∠A = ∠D", result["answer"])
         self.assertIn("边角边（SAS）", result["answer"])
         self.assertIn("BC = EF", result["answer"])

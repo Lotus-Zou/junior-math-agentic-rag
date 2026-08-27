@@ -88,11 +88,13 @@ python main.py
 
 默认示例配置使用 Tosky.ai 的 OpenAI-Compatible Responses API：`gpt-5.6-sol`、`reasoning.effort=low`、`store=false`。低推理强度适合日常初中题并显著降低等待时间；复杂证明题可在 `.env` 中临时改为 `high`。需要在 `.env` 的 `OPENAI_API_KEY` 中配置该服务可用的密钥；不要提交真实密钥。
 
-启动 FastAPI（`/ask`、`/feedback`、`/health`、`/metrics`）：
+启动 FastAPI（`/ask`、`/feedback`、`/health`，以及受保护的 `/metrics`）：
 
 ```powershell
 uvicorn app:app --reload --port 8000
 ```
+
+`/metrics` 默认不暴露。仅在服务进程环境中设置非空 `OPERATIONS_METRICS_TOKEN` 后启用，并要求请求携带 `Authorization: Bearer <token>`；未配置或凭据不匹配时统一返回 `404`。
 
 普通用户打开 `http://127.0.0.1:8000/` 使用双语学生端，默认中文，可在右上角切换 English；`/docs` 是供开发者调试接口的 Swagger 页面。使用时输入完整题目，可展开“添加我的错误作答”填写错误步骤；收到分析后直接在同一输入框继续追问。
 

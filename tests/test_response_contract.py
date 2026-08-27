@@ -5,6 +5,7 @@ from agentic_rag.response_contract import (
     clarification_response,
     normalize_response,
     supported_refusal_response,
+    validated_exercise_state,
 )
 
 
@@ -114,15 +115,19 @@ def test_guided_exercise_requires_private_hidden_answer_signal():
 
 
 def test_guided_exercise_accepts_private_hidden_answer_signal_without_leaking_it():
+    private_state = validated_exercise_state(
+        "equation-3x", "algebra", "x = 2", "x = 2"
+    )
     result = normalize_response(
         {
             "answer": "Solve 3x = 6",
             "validation_passed": True,
             "validation_evidence": {"kind": "deterministic", "passed": True},
-            "exercise_answer_hidden": True,
         },
         "guided_exercise",
+        private_exercise=private_state,
     )
     assert result["response_type"] == "guided_exercise"
     assert "exercise_answer_hidden" not in result
+    assert "x = 2" not in str(result)
 

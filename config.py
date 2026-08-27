@@ -39,6 +39,7 @@ MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))
 
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
 REDIS_URL = os.getenv("REDIS_URL", "")
+OPERATIONS_METRICS_TOKEN = os.getenv("OPERATIONS_METRICS_TOKEN", "")
 
 QUALITY_THRESHOLDS = {
     "context_precision": float(os.getenv("MIN_CONTEXT_PRECISION", "0.65")),

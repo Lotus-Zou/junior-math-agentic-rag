@@ -29,11 +29,13 @@ class AgentState(TypedDict, total=False):
 
     draft_response: str
     response: str
+    response_type: str
     validation_passed: bool
     validation_issues: List[str]
     critic_report: Dict[str, Any]
     needs_clarification: bool
     follow_up_question: str
+    clarification: Dict[str, Any]
     correction_attempts: int
 
     working_memory: Dict[str, Any]

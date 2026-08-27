@@ -17,7 +17,6 @@ from agentic_rag.fast_path import build_fast_response
 from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.math_taxonomy import classify_math_text
 from agentic_rag.math_validation import deterministic_math_checks
-from agentic_rag.response_contract import capture_trusted_skill_response_contract
 
 
 def _candidate(doc: Any) -> RetrievalCandidate:
@@ -67,16 +66,6 @@ def knowledge_classify(data: QueryInput, _context) -> ClassificationOutput:
 
 def curriculum_solve(data: CurriculumSolveInput, _context) -> CurriculumSolveOutput:
     response = build_fast_response(data.query, data.conversation_history, data.conversation_summary, data.language)
-    if response:
-        capture_trusted_skill_response_contract(response)
-        response = {
-            key: value
-            for key, value in response.items()
-            if key not in {
-                "validation_evidence", "_validation_evidence", "exercise_answer_hidden",
-                "_exercise_answer_hidden", "critic_report",
-            }
-        }
     return CurriculumSolveOutput(handled=response is not None, response=response)
 
 
@@ -194,4 +183,11 @@ def memory_commit(data: MemoryInput, _context) -> MemoryOutput:
 
 
 def response_render(data: RenderInput, _context) -> AnswerEnvelope:
-    return AnswerEnvelope(answer=data.answer, language=data.language, sources=data.sources, validation_passed=data.validation_passed)
+    response_type = data.response_type or (
+        "verified_answer" if data.validation_passed else "clarification_required"
+    )
+    return AnswerEnvelope(
+        **data.model_dump(exclude={"response_type", "language"}),
+        response_type=response_type,
+        language=data.language,
+    )

@@ -27,6 +27,7 @@ from agentic_rag.math_retriever import math_retriever
 from agentic_rag.math_taxonomy import classify_math_text
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
 from agentic_rag.memory_manager import compress_history, history_text, working_memory
+from agentic_rag.response_contract import response_validation_digest
 from agentic_rag.state import AgentState
 from agentic_rag.tracing import check_budget, event, new_trace, persist_trace
 from config import RERANK_TOP_K
@@ -315,9 +316,15 @@ def validate_answer_node(state: AgentState) -> dict:
     metrics["hallucinations_detected"] = metrics.get("hallucinations_detected", 0) + int(bool(critic.get("hallucination_detected")))
     updates = {
         "response": answer if passed else state.get("response", ""),
+        "response_type": "verified_answer" if passed else "",
         "validation_passed": passed,
         "validation_issues": issues,
-        "critic_report": {**critic, "deterministic": deterministic, "guardrail_issues": guard_issues},
+        "critic_report": {
+            **critic,
+            "deterministic": deterministic,
+            "guardrail_issues": guard_issues,
+            "validated_response_sha256": response_validation_digest(answer),
+        },
         "needs_clarification": bool(critic.get("needs_clarification")) and bool(state.get("missing_conditions")),
         "follow_up_question": critic.get("follow_up_question", ""),
         "metrics": metrics,
@@ -327,7 +334,18 @@ def validate_answer_node(state: AgentState) -> dict:
 
 def prepare_retry_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "prepare_retry")
-    updates = {"correction_attempts": state.get("correction_attempts", 0) + 1, "draft_response": "", "retrieval_candidates": [], "documents": []}
+    updates = {
+        "correction_attempts": state.get("correction_attempts", 0) + 1,
+        "draft_response": "",
+        "response": "",
+        "response_type": "",
+        "validation_passed": False,
+        "critic_report": {},
+        "needs_clarification": False,
+        "clarification": None,
+        "retrieval_candidates": [],
+        "documents": [],
+    }
     return _node_result(state, "prepare_retry", started, budget, updates, {"attempt": updates["correction_attempts"]})
 
 
@@ -339,28 +357,73 @@ def clarification_response_node(state: AgentState) -> dict:
     }
     message = state.get("follow_up_question") or fallback[state.get("response_language", "zh")]
     history = [*state.get("conversation_history", []), {"role": "student", "content": state["query"]}, {"role": "tutor", "content": message}]
-    return _node_result(state, "clarify", started, budget, {"response": message, "conversation_history": history, "validation_passed": True}, {"follow_up": message})
+    missing = list(state.get("missing_conditions", [])) or [
+        "the full problem or diagram conditions"
+        if state.get("response_language", "zh") == "en"
+        else "完整题干或图形条件"
+    ]
+    updates = {
+        "draft_response": "",
+        "response": message,
+        "response_type": "clarification_required",
+        "conversation_history": history,
+        "validation_passed": True,
+        "critic_report": {},
+        "needs_clarification": True,
+        "clarification": {"missing": missing},
+    }
+    return _node_result(state, "clarify", started, budget, updates, {"follow_up": message})
 
 
 def no_evidence_response_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "no_evidence")
     message = {
-        "zh": "知识库没有召回足以支撑本题的教材片段，系统不会直接猜答案。请补充题目，或先导入对应教材资料。",
-        "en": "The knowledge base did not retrieve enough evidence for this problem, so the system will not guess. Add more details or import the relevant textbook material.",
+        "zh": "现有信息还不足以可靠解答这道题。请补充完整条件，或提供相关教材内容。",
+        "en": "There is not enough information to answer this problem reliably. Add the complete conditions or the relevant textbook material.",
     }[state.get("response_language", "zh")]
     history = [*state.get("conversation_history", []), {"role": "student", "content": state["query"]}, {"role": "tutor", "content": message}]
-    return _node_result(state, "no_evidence", started, budget, {"response": message, "conversation_history": history, "validation_passed": True}, {"error": state.get("error")})
+    missing = [
+        "the complete conditions or relevant textbook information"
+        if state.get("response_language", "zh") == "en"
+        else "完整条件或相关教材信息"
+    ]
+    updates = {
+        "draft_response": "",
+        "response": message,
+        "response_type": "clarification_required",
+        "conversation_history": history,
+        "validation_passed": True,
+        "critic_report": {},
+        "needs_clarification": True,
+        "clarification": {"missing": missing},
+    }
+    return _node_result(state, "no_evidence", started, budget, updates, {"error": state.get("error")})
 
 
 def validation_failure_response_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "validation_failure")
-    issues = "；".join(state.get("validation_issues", [])) or "无法确认步骤与教材依据一致"
     if state.get("response_language", "zh") == "en":
-        message = f"The draft did not pass the independent Critic and is not presented as a conclusion. Issues: {issues}. Add conditions or try another derivation."
+        message = "The current derivation cannot yet be presented as a reliable conclusion. Add the missing conditions or send a revised derivation."
     else:
-        message = f"当前草稿未通过独立 Critic，暂不作为结论。缺陷：{issues}。请补充条件或换一种推导继续核对。"
+        message = "当前推导还不能作为可靠结论。请补充缺失条件，或换一种推导继续核对。"
     history = [*state.get("conversation_history", []), {"role": "tutor", "content": message}]
-    return _node_result(state, "validation_failure", started, budget, {"response": message, "conversation_history": history, "validation_passed": False}, {"issues": state.get("validation_issues", [])})
+    updates = {
+        "draft_response": "",
+        "response": message,
+        "response_type": "clarification_required",
+        "conversation_history": history,
+        "validation_passed": False,
+        "critic_report": {},
+        "needs_clarification": True,
+        "clarification": {
+            "missing": [
+                "a complete condition or a revised derivation"
+                if state.get("response_language", "zh") == "en"
+                else "完整条件或修改后的推导"
+            ]
+        },
+    }
+    return _node_result(state, "validation_failure", started, budget, updates, {"issues": state.get("validation_issues", [])})
 
 
 def consolidate_memory_node(state: AgentState) -> dict:

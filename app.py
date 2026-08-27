@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import dataclass
 import json
 import logging
+import secrets
 import time
 import unicodedata
 import uuid
@@ -17,7 +18,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -30,13 +31,14 @@ from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.metrics import FEEDBACK, observe_state
 from agentic_rag.response_contract import (
     capture_skill_contract, clarification_response, consume_skill_contract, normalize_response,
-    peek_skill_contract,
+    peek_skill_contract, private_exercise_payload, response_validation_digest,
+    restore_validated_exercise_state,
 )
 from agentic_rag.tracing import append_bad_case, persist_trace
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.executor import SkillExecutor
 from agentic_rag.skill_runtime.registry import get_default_registry
-from config import CHROMA_PATH, OPENAI_API_KEY, RUN_TIMEOUT_SECONDS
+from config import CHROMA_PATH, OPENAI_API_KEY, OPERATIONS_METRICS_TOKEN, RUN_TIMEOUT_SECONDS
 
 STATIC_DIR = Path(__file__).with_name("static")
 _graph = None
@@ -51,6 +53,10 @@ _PUBLIC_RESPONSE_TYPES = {
     "guided_exercise",
     "clarification_required",
     "supported_refusal",
+}
+_GRAPH_VALIDATION_MODES = {
+    "llm": "independent_critic",
+    "local_sympy": "deterministic",
 }
 
 
@@ -140,9 +146,10 @@ def _run_curriculum_skill(request: AskRequest) -> CurriculumSkillRun | None:
     response = result.value.response
     if not response:
         return None
-    response.setdefault("metrics", {})["skill_runtime_ms"] = result.metrics["latency_ms"]
-    response["metrics"]["skill"] = result.provenance
-    return CurriculumSkillRun(response=response, contract=contract)
+    return CurriculumSkillRun(
+        response=response.model_dump(mode="json", exclude_unset=True),
+        contract=contract,
+    )
 
 
 def _peek_skill_contract() -> dict[str, Any] | None:
@@ -196,11 +203,26 @@ class _CacheValidationEvidence(BaseModel):
         return self
 
 
+class _CachePrivateExerciseState(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    template_id: str
+    topic: str
+    hidden_answer: str
+    validation_digest: str
+
+    @model_validator(mode="after")
+    def validate_digest(self) -> "_CachePrivateExerciseState":
+        if restore_validated_exercise_state(self.model_dump()) is None:
+            raise ValueError("private exercise state has an invalid digest")
+        return self
+
+
 class _CacheContract(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     validation_evidence: _CacheValidationEvidence
-    exercise_answer_hidden: bool
+    private_exercise_state: _CachePrivateExerciseState | None = None
 
 
 class _CacheConversationTurn(BaseModel):
@@ -208,6 +230,31 @@ class _CacheConversationTurn(BaseModel):
 
     role: Literal["student", "tutor"]
     content: str
+
+
+class _CacheSource(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    chunk_id: str | None = None
+    source: str = ""
+    chapter: str | None = None
+    rank: int | float | None = None
+
+
+class _CacheExerciseState(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    topic: str = ""
+    difficulty_delta: int = 0
+    difficulty: int | None = None
+    exercise_type: str | None = None
+    template_id: str | None = None
+
+
+class _CacheClarification(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    missing: list[str] = Field(default_factory=list)
 
 
 class _CacheMetrics(BaseModel):
@@ -230,12 +277,12 @@ class _CachePublicResponse(BaseModel):
     trace_id: str
     intent: str
     knowledge_points: list[str]
-    sources: list[dict[str, Any]]
+    sources: list[_CacheSource]
     validation_passed: bool
     conversation_history: list[_CacheConversationTurn]
     conversation_summary: str
-    exercise_state: dict[str, Any] | None
-    clarification: dict[str, Any] | None
+    exercise_state: _CacheExerciseState | None
+    clarification: _CacheClarification | None
     cached: bool
     metrics: _CacheMetrics
     response_type: Literal["verified_answer", "guided_exercise"]
@@ -255,8 +302,9 @@ class _CacheRecord(BaseModel):
 
     @model_validator(mode="after")
     def validate_response_type_matches_hidden_state(self) -> "_CacheRecord":
-        expects_hidden = self.public.response_type == "guided_exercise"
-        if self.contract.exercise_answer_hidden is not expects_hidden:
+        expects_private_exercise = self.public.response_type == "guided_exercise"
+        has_private_exercise = self.contract.private_exercise_state is not None
+        if has_private_exercise is not expects_private_exercise:
             raise ValueError("cached response type and hidden-answer state disagree")
         return self
 
@@ -270,30 +318,34 @@ def _validated_cache_record(candidate: Any) -> dict[str, Any]:
 
 
 def _validated_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(contract, dict):
+    try:
+        validated = _CacheContract.model_validate(contract)
+    except (ValidationError, TypeError):
         return {}
-    candidate = contract.get("validation_evidence")
-    if (
-        not isinstance(candidate, dict)
-        or candidate.get("kind") not in {"deterministic", "independent_critic"}
-        or candidate.get("passed") is not True
-    ):
-        return {}
-    return {
-        "validation_evidence": {"kind": candidate["kind"], "passed": True},
-        "exercise_answer_hidden": contract.get("exercise_answer_hidden") is True,
-    }
+    return validated.model_dump(mode="json", exclude_none=True)
 
 
 def _graph_contract(state: dict[str, Any]) -> dict[str, Any]:
     critic = state.get("critic_report")
+    response = state.get("response")
+    mode = critic.get("validation_mode") if isinstance(critic, dict) else None
+    deterministic = critic.get("deterministic") if isinstance(critic, dict) else None
     if (
         not isinstance(critic, dict)
+        or not isinstance(response, str)
+        or not response
+        or state.get("response_type") != "verified_answer"
+        or state.get("needs_clarification") is True
         or state.get("validation_passed") is not True
         or critic.get("is_valid") is not True
+        or mode not in _GRAPH_VALIDATION_MODES
+        or not isinstance(deterministic, dict)
+        or deterministic.get("passed") is not True
+        or state.get("draft_response") != response
+        or critic.get("validated_response_sha256") != response_validation_digest(response)
     ):
         return {}
-    kind = "deterministic" if str(critic.get("validation_mode", "")).startswith("local_") else "independent_critic"
+    kind = _GRAPH_VALIDATION_MODES[mode]
     return _validated_contract({"validation_evidence": {"kind": kind, "passed": True}})
 
 
@@ -333,16 +385,22 @@ def _public_response(
         normalized_payload.pop(field, None)
     trusted_contract = _validated_contract(contract)
     evidence = trusted_contract.get("validation_evidence")
-    hidden = trusted_contract.get("exercise_answer_hidden") is True
+    private_exercise = restore_validated_exercise_state(
+        trusted_contract.get("private_exercise_state")
+    )
 
     if response_type in {"verified_answer", "guided_exercise"}:
-        if evidence is None or (response_type == "guided_exercise" and not hidden):
+        if evidence is None or (
+            response_type == "guided_exercise" and private_exercise is None
+        ):
             raise ContractViolation("verified response is missing required evidence")
         normalized_payload["validation_evidence"] = evidence
-        if response_type == "guided_exercise":
-            normalized_payload["exercise_answer_hidden"] = True
         try:
-            return normalize_response(normalized_payload, response_type)
+            return normalize_response(
+                normalized_payload,
+                response_type,
+                private_exercise=private_exercise,
+            )
         except ValueError as exc:
             raise ContractViolation("response contract rejected producer payload") from exc
     if response_type in {"clarification_required", "supported_refusal"}:
@@ -350,12 +408,15 @@ def _public_response(
             return normalize_response(normalized_payload, response_type)
         except ValueError as exc:
             raise ContractViolation("response contract rejected producer payload") from exc
-    if hidden:
+    if private_exercise is not None:
         if evidence is None:
             raise ContractViolation("guided response is missing validation evidence")
         normalized_payload["validation_evidence"] = evidence
-        normalized_payload["exercise_answer_hidden"] = True
-        return normalize_response(normalized_payload, "guided_exercise")
+        return normalize_response(
+            normalized_payload,
+            "guided_exercise",
+            private_exercise=private_exercise,
+        )
     if evidence is not None:
         normalized_payload["validation_evidence"] = evidence
         return normalize_response(normalized_payload, "verified_answer")
@@ -373,16 +434,22 @@ def _cache_record(public_response: dict[str, Any], contract: dict[str, Any]) -> 
     response_type = public_response.get("response_type")
     if response_type not in {"verified_answer", "guided_exercise"} or evidence is None:
         raise ContractViolation("cache record is missing validation evidence")
-    hidden = trusted_contract.get("exercise_answer_hidden") is True
-    if response_type == "guided_exercise" and not hidden:
+    private_exercise = restore_validated_exercise_state(
+        trusted_contract.get("private_exercise_state")
+    )
+    if response_type == "guided_exercise" and private_exercise is None:
         raise ContractViolation("cache record is missing hidden-answer signal")
+    if response_type == "verified_answer" and private_exercise is not None:
+        raise ContractViolation("verified cache record cannot carry exercise state")
+    contract_payload: dict[str, Any] = {"validation_evidence": evidence}
+    if private_exercise is not None:
+        contract_payload["private_exercise_state"] = private_exercise_payload(
+            private_exercise
+        )
     return _validated_cache_record(
         {
             "public": public_response,
-            "contract": {
-                "validation_evidence": evidence,
-                "exercise_answer_hidden": hidden,
-            },
+            "contract": contract_payload,
         }
     )
 
@@ -482,6 +549,7 @@ async def ask(request: AskRequest):
         observe_state(state, latency)
         graph_contract = _graph_contract(state)
         raw_response = {
+            "response_type": state.get("response_type"),
             "answer": state.get("response", ""),
             "trace_id": state.get("trace_id"),
             "intent": state.get("intent"),
@@ -490,6 +558,7 @@ async def ask(request: AskRequest):
             "validation_passed": state.get("validation_passed", False),
             "conversation_history": state.get("conversation_history", []),
             "conversation_summary": state.get("conversation_summary", ""),
+            "clarification": state.get("clarification"),
             "metrics": state.get("metrics", {}),
             "cached": False,
         }
@@ -532,6 +601,11 @@ def feedback(request: FeedbackRequest):
     return {"accepted": True}
 
 
-@app.get("/metrics")
-def metrics():
+@app.get("/metrics", include_in_schema=False)
+def metrics(authorization: str | None = Header(default=None)):
+    token = OPERATIONS_METRICS_TOKEN
+    supplied = authorization or ""
+    expected = f"Bearer {token}" if token else ""
+    if not token or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=404, detail="Not Found")
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
