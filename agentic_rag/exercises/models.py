@@ -21,10 +21,12 @@ class StrictExerciseModel(BaseModel):
 
 class ExerciseRequest(StrictExerciseModel):
     topic: ExerciseTopic
+    language: Literal["zh", "en"] = "zh"
     grade: int = Field(default=8, ge=7, le=9)
     difficulty: int = Field(default=2, ge=1, le=5)
     exercise_type: ExerciseType = "calculation"
     recent_fingerprints: list[str] = Field(default_factory=list, max_length=20)
+    recent_prompt_fingerprints: list[str] = Field(default_factory=list, max_length=10)
     recent_answer_signatures: list[str] = Field(default_factory=list, max_length=10)
     seed: int | None = None
 
@@ -75,6 +77,10 @@ class ExerciseSessionState(StrictExerciseModel):
 
     session_id: str = Field(min_length=1, max_length=128)
     current_exercise_id: str = Field(min_length=1, max_length=128)
+    current_topic: ExerciseTopic | None = None
+    current_grade: int | None = Field(default=None, ge=7, le=9)
+    current_difficulty: int | None = Field(default=None, ge=1, le=5)
+    current_exercise_type: ExerciseType | None = None
     recent_fingerprints: list[str] = Field(default_factory=list, max_length=20)
     recent_prompt_fingerprints: list[str] = Field(default_factory=list, max_length=10)
     recent_answer_signatures: list[str] = Field(default_factory=list, max_length=5)

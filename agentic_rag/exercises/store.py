@@ -31,8 +31,8 @@ def _append_bounded(values: list[str], value: str, limit: int) -> list[str]:
     return [*values, value][-limit:]
 
 
-def _prompt_fingerprint(problem: str) -> str:
-    normalized = unicodedata.normalize("NFKC", problem).strip()
+def _prompt_fingerprint(problem: str, hint: str) -> str:
+    normalized = unicodedata.normalize("NFKC", f"{problem}\n{hint}").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
@@ -95,6 +95,10 @@ class ExerciseStore:
             session = ExerciseSessionState(
                 session_id=resolved_session_id,
                 current_exercise_id=private_exercise.exercise_id,
+                current_topic=private_exercise.topic,
+                current_grade=private_exercise.grade,
+                current_difficulty=private_exercise.difficulty,
+                current_exercise_type=private_exercise.exercise_type,
                 recent_fingerprints=_append_bounded(
                     prior.recent_fingerprints if prior else [],
                     private_exercise.fingerprint,
@@ -102,7 +106,7 @@ class ExerciseStore:
                 ),
                 recent_prompt_fingerprints=_append_bounded(
                     prior.recent_prompt_fingerprints if prior else [],
-                    _prompt_fingerprint(private_exercise.problem),
+                    _prompt_fingerprint(private_exercise.problem, private_exercise.hint),
                     10,
                 ),
                 recent_answer_signatures=_append_bounded(
