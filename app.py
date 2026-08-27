@@ -36,7 +36,9 @@ from agentic_rag.response_contract import (
     peek_skill_contract, private_exercise_payload, public_response_digest,
     response_validation_digest,
     restore_validated_exercise_state,
+    supported_refusal_response,
 )
+from agentic_rag.reliability import FailureKind, resolve_failure
 from agentic_rag.tracing import append_bad_case, persist_trace
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -404,6 +406,23 @@ def _clarification_for(request: AskRequest, trace_id: str | None = None) -> dict
     return response
 
 
+def _reliability_response(
+    request: AskRequest,
+    failure_kind: FailureKind,
+    trace_id: str,
+) -> dict[str, Any]:
+    payload = resolve_failure(
+        query=request.query,
+        language=request.language,
+        history=request.conversation_history,
+        summary=request.conversation_summary,
+        failure_kind=failure_kind,
+        issues=[],
+    )
+    payload["trace_id"] = trace_id
+    return _public_response(payload, request)
+
+
 def _require_public_digest_match(
     response: dict[str, Any], trusted_contract: dict[str, Any]
 ) -> dict[str, Any]:
@@ -614,7 +633,21 @@ async def ask(request: AskRequest):
         if guard_issue:
             trace_id = str(uuid.uuid4())
             _record_failure(trace_id, request.query, "input_guardrail", [guard_issue], started)
-            raise HTTPException(status_code=400, detail="输入不符合数学教学系统的安全约束，请只提交题目、解题步骤或相关追问。")
+            reason = (
+                "This request is outside the supported junior mathematics learning scope. Please send a math problem, your steps, or a related follow-up."
+                if request.language == "en"
+                else "当前请求不属于可处理的初中数学学习内容。请提交数学题目、解题步骤或相关追问。"
+            )
+            response = supported_refusal_response(
+                request.query,
+                request.conversation_history,
+                request.conversation_summary,
+                reason,
+                request.language,
+            )
+            response["trace_id"] = trace_id
+            response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
+            return response
 
         cache_payload = request.model_dump()
         cache_enabled = not _bypass_answer_cache(request)
@@ -704,19 +737,19 @@ async def ask(request: AskRequest):
     except asyncio.TimeoutError:
         trace_id = str(uuid.uuid4())
         _record_failure(trace_id, request.query, "timeout", ["timeout"], started)
-        response = _clarification_for(request, trace_id)
+        response = _reliability_response(request, "timeout", trace_id)
         response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
         return response
     except ContractViolation as exc:
         trace_id = str(uuid.uuid4())
         _record_failure(trace_id, request.query, "contract_error", [type(exc).__name__], started)
-        response = _clarification_for(request, trace_id)
+        response = _reliability_response(request, "runtime_error", trace_id)
         response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
         return response
     except Exception as exc:
         trace_id = str(uuid.uuid4())
         _record_failure(trace_id, request.query, "runtime_error", [type(exc).__name__], started)
-        response = _clarification_for(request, trace_id)
+        response = _reliability_response(request, "runtime_error", trace_id)
         response["metrics"]["latency_ms"] = round((time.time() - started) * 1000, 2)
         return response
 

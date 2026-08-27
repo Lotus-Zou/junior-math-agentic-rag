@@ -26,6 +26,8 @@ function assertNoInternalCopy(text, state) {
   });
 
   await page.goto(`${baseUrl}/`, { waitUntil: "networkidle" });
+  const frontendSource = await page.locator('script[src="/static/app.js"]').getAttribute("src");
+  if (frontendSource !== "/static/app.js") throw new Error("Frontend application script missing");
   await page.waitForFunction(() => document.querySelector("#serviceStatus")?.textContent.includes("服务正常"));
   if (!(await page.title()).includes("数问")) throw new Error("Chinese title missing");
   assertNoInternalCopy(await page.locator("body").innerText(), "Chinese first paint");

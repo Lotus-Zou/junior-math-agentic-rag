@@ -19,7 +19,7 @@ const translations = {
     practice: "练习", needsMoreInfo: "需要补充信息", scopeLimited: "当前请求暂不支持",
     sources: "查看来源", noSources: "本次回答没有可展示的来源。", sourceUnknown: "教材片段", chapter: "章节", rank: "排序",
     helpful: "回答有帮助", incorrect: "回答有问题", feedbackThanks: "反馈已记录", feedbackFailed: "反馈提交失败",
-    emptyQuestion: "请先输入完整题目。", requestFailed: "请补充完整题干、图形条件或需要核对的步骤。", timeout: "请补充完整题干、图形条件或需要核对的步骤。",
+    emptyQuestion: "请先输入完整题目。", requestFailed: "连接暂时中断，题目已保留，请再次发送。", timeout: "连接等待已结束，题目已保留，请再次发送。",
     newSessionReady: "已开始新的订正", sourcesCount: "条来源", latency: "耗时", cached: "缓存命中",
     menuLabel: "打开菜单", helpLabel: "使用说明", sendLabel: "发送题目", closeLabel: "关闭",
     examples: {
@@ -48,7 +48,7 @@ const translations = {
     practice: "Practice", needsMoreInfo: "More information needed", scopeLimited: "Request not supported",
     sources: "View sources", noSources: "No displayable sources for this response.", sourceUnknown: "Textbook excerpt", chapter: "Chapter", rank: "Rank",
     helpful: "Helpful answer", incorrect: "Report an issue", feedbackThanks: "Feedback recorded", feedbackFailed: "Could not submit feedback",
-    emptyQuestion: "Enter the complete problem first.", requestFailed: "Please add the full problem, diagram conditions, or the step you want checked.", timeout: "Please add the full problem, diagram conditions, or the step you want checked.",
+    emptyQuestion: "Enter the complete problem first.", requestFailed: "The connection was interrupted. Your problem is preserved; please send it again.", timeout: "The connection wait ended. Your problem is preserved; please send it again.",
     newSessionReady: "New correction started", sourcesCount: "sources", latency: "Latency", cached: "Cached",
     menuLabel: "Open menu", helpLabel: "How to use", sendLabel: "Send problem", closeLabel: "Close",
     examples: {
@@ -368,7 +368,7 @@ async function submitQuestion(event) {
 
   const query = wrongAnswer ? `${question}\n\n${state.language === "zh" ? "学生错误作答" : "Student's incorrect attempt"}: ${wrongAnswer}` : question;
   const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 12000);
+  const timeoutId = window.setTimeout(() => controller.abort(), 35000);
   try {
     const response = await fetch("/ask", {
       method: "POST",
@@ -384,6 +384,8 @@ async function submitQuestion(event) {
     state.latestResult = result;
     appendAssistantMessage(result);
   } catch (error) {
+    elements.question.value = question;
+    resizeTextarea(elements.question);
     appendAssistantMessage({ answer: error.name === "AbortError" ? t("timeout") : t("requestFailed"), response_type: "clarification_required", validation_passed: false, sources: [] });
   } finally {
     window.clearTimeout(timeoutId);
