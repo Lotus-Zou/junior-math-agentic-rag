@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from agentic_rag import memory
 from agentic_rag.cache import answer_cache
@@ -182,6 +182,93 @@ def _record_failure(trace_id: str, query: str, category: str, issues: list[str],
 class ContractViolation(ValueError):
     pass
 
+
+class _CacheValidationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    kind: Literal["deterministic", "independent_critic"]
+    passed: bool
+
+    @model_validator(mode="after")
+    def validate_passed(self) -> "_CacheValidationEvidence":
+        if self.passed is not True:
+            raise ValueError("cached validation evidence must have passed")
+        return self
+
+
+class _CacheContract(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    validation_evidence: _CacheValidationEvidence
+    exercise_answer_hidden: bool
+
+
+class _CacheConversationTurn(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    role: Literal["student", "tutor"]
+    content: str
+
+
+class _CacheMetrics(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    tool_calls: int | float | None = None
+    latency_ms: int | float | None = None
+
+    @model_validator(mode="after")
+    def validate_present_metrics_are_numeric(self) -> "_CacheMetrics":
+        if any(getattr(self, field) is None for field in self.model_fields_set):
+            raise ValueError("present cache metrics must be numeric")
+        return self
+
+
+class _CachePublicResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    answer: str
+    trace_id: str
+    intent: str
+    knowledge_points: list[str]
+    sources: list[dict[str, Any]]
+    validation_passed: bool
+    conversation_history: list[_CacheConversationTurn]
+    conversation_summary: str
+    exercise_state: dict[str, Any] | None
+    clarification: dict[str, Any] | None
+    cached: bool
+    metrics: _CacheMetrics
+    response_type: Literal["verified_answer", "guided_exercise"]
+
+    @model_validator(mode="after")
+    def validate_fixed_public_values(self) -> "_CachePublicResponse":
+        if self.validation_passed is not True or self.cached is not False:
+            raise ValueError("cached public response has invalid fixed values")
+        return self
+
+
+class _CacheRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    public: _CachePublicResponse
+    contract: _CacheContract
+
+    @model_validator(mode="after")
+    def validate_response_type_matches_hidden_state(self) -> "_CacheRecord":
+        expects_hidden = self.public.response_type == "guided_exercise"
+        if self.contract.exercise_answer_hidden is not expects_hidden:
+            raise ValueError("cached response type and hidden-answer state disagree")
+        return self
+
+
+def _validated_cache_record(candidate: Any) -> dict[str, Any]:
+    """Apply the one cache schema used by both the writer and reader."""
+    try:
+        return _CacheRecord.model_validate(candidate).model_dump(exclude_unset=True)
+    except ValidationError as exc:
+        raise ContractViolation("cache record must match the writer schema") from exc
+
+
 def _validated_contract(contract: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(contract, dict):
         return {}
@@ -289,43 +376,20 @@ def _cache_record(public_response: dict[str, Any], contract: dict[str, Any]) -> 
     hidden = trusted_contract.get("exercise_answer_hidden") is True
     if response_type == "guided_exercise" and not hidden:
         raise ContractViolation("cache record is missing hidden-answer signal")
-    return {
-        "public": public_response,
-        "contract": {
-            "validation_evidence": evidence,
-            "exercise_answer_hidden": hidden,
-        },
-    }
+    return _validated_cache_record(
+        {
+            "public": public_response,
+            "contract": {
+                "validation_evidence": evidence,
+                "exercise_answer_hidden": hidden,
+            },
+        }
+    )
 
 
 def _cached_response(cached: Any, request: AskRequest) -> dict[str, Any]:
-    if not isinstance(cached, dict) or set(cached) != {"public", "contract"}:
-        raise ContractViolation("cache record must match the writer schema")
-    public = cached["public"]
-    contract = cached["contract"]
-    if not isinstance(public, dict) or not isinstance(contract, dict):
-        raise ContractViolation("cache record is missing contract metadata")
-    response_type = public.get("response_type")
-    if response_type not in {"verified_answer", "guided_exercise"}:
-        raise ContractViolation("cache record has a non-cacheable response type")
-    if set(contract) != {"validation_evidence", "exercise_answer_hidden"}:
-        raise ContractViolation("cache contract must match the writer schema")
-    if response_type == "guided_exercise" and contract["exercise_answer_hidden"] is not True:
-        raise ContractViolation("guided cache record is missing hidden-answer signal")
-    if response_type == "verified_answer" and contract["exercise_answer_hidden"] is not False:
-        raise ContractViolation("verified cache record has an invalid hidden-answer signal")
-    if any(
-        field in public
-        for field in (
-            "validation_evidence", "_validation_evidence", "exercise_answer_hidden",
-            "_exercise_answer_hidden", "critic_report",
-        )
-    ):
-        raise ContractViolation("cache public response contains contract fields")
-    trusted_contract = _validated_contract(contract)
-    if not trusted_contract:
-        raise ContractViolation("cache record has invalid validation evidence")
-    return _public_response(public, request, contract=trusted_contract)
+    record = _validated_cache_record(cached)
+    return _public_response(record["public"], request, contract=record["contract"])
 
 
 def _readiness_checks() -> dict[str, bool]:

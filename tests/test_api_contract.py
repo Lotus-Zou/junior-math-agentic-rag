@@ -32,6 +32,26 @@ def client():
         yield test_client
 
 
+def _writer_cache_record(response_type="verified_answer"):
+    hidden = response_type == "guided_exercise"
+    contract = {
+        "validation_evidence": {"kind": "deterministic", "passed": True},
+        "exercise_answer_hidden": hidden,
+    }
+    request = api.AskRequest(query="缓存验证", language="zh")
+    public = api._public_response(
+        {
+            "response_type": response_type,
+            "answer": "cached exercise" if hidden else "cached answer",
+            "validation_passed": True,
+            "metrics": {"tool_calls": 0},
+        },
+        request,
+        contract=contract,
+    )
+    return api._cache_record(public, contract)
+
+
 @pytest.mark.parametrize(
     ("query", "language", "response_type"),
     [
@@ -114,26 +134,15 @@ def test_graph_success_is_normalized_before_returning_from_ask(client, monkeypat
     assert not (INTERNAL_FIELDS & payload.keys())
 
 
-def test_verified_cache_hit_requires_stored_validation_evidence(client, monkeypatch):
-    monkeypatch.setattr(
-        api.answer_cache,
-        "get",
-        lambda _payload: {
-            "public": {
-                "response_type": "verified_answer",
-                "answer": "x = 4",
-                "validation_passed": True,
-                "metrics": {"tool_calls": 0},
-            },
-            "contract": {"validation_evidence": {"kind": "deterministic", "passed": True}, "exercise_answer_hidden": False},
-        },
-    )
+@pytest.mark.parametrize("response_type", ["verified_answer", "guided_exercise"])
+def test_writer_cache_records_round_trip(client, monkeypatch, response_type):
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: _writer_cache_record(response_type))
 
     response = client.post("/ask", json={"query": "缓存验证", "language": "zh"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["response_type"] == "verified_answer"
+    assert payload["response_type"] == response_type
     assert payload["cached"] is True
     assert not (INTERNAL_FIELDS & payload.keys())
 
@@ -329,3 +338,51 @@ def test_cache_records_outside_writer_schema_fail_closed(client, monkeypatch, ca
     payload = response.json()
     assert payload["response_type"] == "clarification_required"
     assert payload["answer"] not in {"cached clarification", "cached refusal", "cached exercise", "cached answer"}
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda cached: cached["contract"]["validation_evidence"].update({"forged": True}),
+        lambda cached: cached["contract"]["validation_evidence"].pop("kind"),
+        lambda cached: cached["contract"].pop("validation_evidence"),
+        lambda cached: cached["contract"].update({"validation_evidence": []}),
+        lambda cached: cached["contract"]["validation_evidence"].update({"kind": "forged"}),
+        lambda cached: cached["contract"]["validation_evidence"].update({"passed": False}),
+        lambda cached: cached["contract"]["validation_evidence"].update({"passed": 1}),
+        lambda cached: cached["contract"].update({"exercise_answer_hidden": 0}),
+        lambda cached: cached["contract"].update({"exercise_answer_hidden": True}),
+        lambda cached: cached["public"].update({"forged": True}),
+        lambda cached: cached["public"].pop("trace_id"),
+        lambda cached: cached["public"].update({"validation_passed": 1}),
+        lambda cached: cached["public"].update({"cached": True}),
+        lambda cached: cached["public"]["metrics"].update({"latency_ms": None}),
+    ],
+    ids=[
+        "nested-extra",
+        "nested-missing",
+        "evidence-missing",
+        "evidence-wrong-type",
+        "bad-kind",
+        "passed-false",
+        "nested-wrong-type",
+        "hidden-wrong-type",
+        "response-type-hidden-mismatch",
+        "public-extra",
+        "public-missing",
+        "public-wrong-type",
+        "public-fixed-value",
+        "metrics-value-wrong-type",
+    ],
+)
+def test_cache_reader_rejects_mutations_outside_writer_schema(client, monkeypatch, mutate):
+    cached = _writer_cache_record()
+    mutate(cached)
+    monkeypatch.setattr(api.answer_cache, "get", lambda _payload: cached)
+
+    response = client.post("/ask", json={"query": "篡改缓存", "language": "zh"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["response_type"] == "clarification_required"
+    assert payload["answer"] != "cached answer"
