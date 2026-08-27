@@ -520,6 +520,30 @@ def test_renderer_replaces_rejected_draft_with_safe_teaching_copy(declared_type)
     assert rendered.answer
 
 
+def test_renderer_clears_rejected_draft_from_history_and_summary():
+    rejected = "REJECTED_MARKER_x_999"
+
+    rendered = response_render(
+        RenderInput(
+            answer=f"draft {rejected}",
+            response_type="verified_answer",
+            validation_passed=False,
+            language="en",
+            conversation_history=[
+                {"role": "student", "content": "problem"},
+                {"role": "tutor", "content": f"untrusted draft {rejected}"},
+            ],
+            conversation_summary=f"summary retained {rejected}",
+        ),
+        _render_context("rejected-history"),
+    )
+
+    assert rendered.response_type == "clarification_required"
+    assert rendered.conversation_history == []
+    assert rendered.conversation_summary == ""
+    assert rejected not in rendered.model_dump_json()
+
+
 @pytest.mark.parametrize(
     "response_type",
     [

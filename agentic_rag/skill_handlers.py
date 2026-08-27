@@ -196,6 +196,8 @@ def response_render(data: RenderInput, _context) -> AnswerEnvelope:
             intent="clarification",
             knowledge_points=[],
             sources=[],
+            conversation_history=[],
+            conversation_summary="",
             exercise_state=None,
             cached=False,
             clarification={
