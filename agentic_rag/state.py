@@ -36,6 +36,9 @@ class AgentState(TypedDict, total=False):
     needs_clarification: bool
     follow_up_question: str
     clarification: Dict[str, Any]
+    completeness_status: str
+    internal_failure_kind: str
+    verified_partial: str
     correction_attempts: int
 
     working_memory: Dict[str, Any]

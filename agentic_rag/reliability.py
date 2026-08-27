@@ -10,6 +10,7 @@ from agentic_rag.completeness import analyze_completeness
 
 
 FailureKind = Literal[
+    "incomplete_input",
     "timeout",
     "runtime_error",
     "retrieval_empty",

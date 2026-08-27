@@ -7,6 +7,7 @@ from pathlib import Path
 from langgraph.graph import END, StateGraph
 
 from agentic_rag.nodes import (
+    analyze_completeness_node,
     classify_knowledge_node,
     clarification_response_node,
     consolidate_memory_node,
@@ -61,6 +62,7 @@ def build_graph():
     for name, node in {
         "retrieve_memory": retrieve_memory_node,
         "parse_question": parse_question_node,
+        "analyze_completeness": analyze_completeness_node,
         "rewrite_query": rewrite_query_node,
         "classify_knowledge": classify_knowledge_node,
         "react_agent": react_agent_node,
@@ -78,7 +80,12 @@ def build_graph():
 
     workflow.set_entry_point("retrieve_memory")
     workflow.add_edge("retrieve_memory", "parse_question")
-    workflow.add_edge("parse_question", "rewrite_query")
+    workflow.add_edge("parse_question", "analyze_completeness")
+    workflow.add_conditional_edges(
+        "analyze_completeness",
+        lambda state: "clarify" if state.get("needs_clarification") else "rewrite",
+        {"clarify": "clarify", "rewrite": "rewrite_query"},
+    )
     workflow.add_conditional_edges(
         "rewrite_query",
         lambda state: "clarify" if state.get("needs_clarification") else "classify",

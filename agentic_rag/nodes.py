@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 
 from agentic_rag import memory
+from agentic_rag.completeness import analyze_completeness
 from agentic_rag.chains import (
     generator_llm,
     get_answer_validation_chain,
@@ -28,6 +29,7 @@ from agentic_rag.math_taxonomy import classify_math_text
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
 from agentic_rag.memory_manager import compress_history, history_text, working_memory
 from agentic_rag.response_contract import response_validation_digest
+from agentic_rag.reliability import FailureKind, resolve_failure
 from agentic_rag.state import AgentState
 from agentic_rag.tracing import check_budget, event, new_trace, persist_trace
 from config import RERANK_TOP_K
@@ -112,6 +114,30 @@ def parse_question_node(state: AgentState) -> dict:
             result = {"stem": query, "student_answer": "", "intent": intent, "error_clues": []}
     result["fast_path"] = fast_path
     return _node_result(state, "parse_question", started, budget, result, {"intent": result["intent"], "has_student_answer": bool(result.get("student_answer")), "fast_path": fast_path})
+
+
+def analyze_completeness_node(state: AgentState) -> dict:
+    started, budget = _node_start(state, "analyze_completeness")
+    result = analyze_completeness(
+        state.get("stem") or state["query"],
+        state.get("response_language", "zh"),
+        has_image=bool(state.get("has_image", False)),
+    )
+    needs_clarification = result.status != "complete"
+    updates = {
+        "completeness_status": result.status,
+        "missing_conditions": list(result.missing),
+        "needs_clarification": needs_clarification,
+        "follow_up_question": result.follow_up,
+    }
+    return _node_result(
+        state,
+        "analyze_completeness",
+        started,
+        budget,
+        updates,
+        {"status": result.status, "missing": result.missing},
+    )
 
 
 def rewrite_query_node(state: AgentState) -> dict:
@@ -201,8 +227,13 @@ def retrieve_documents_node(state: AgentState) -> dict:
             state.get("knowledge_points", []),
         )
         updates = {"retrieval_candidates": candidates, "retrieval_trace": trace, "error": state.get("error")}
-    except Exception as exc:
-        updates = {"retrieval_candidates": [], "retrieval_trace": [], "error": str(exc)}
+    except Exception:
+        updates = {
+            "retrieval_candidates": [],
+            "retrieval_trace": [],
+            "error": "retrieval_failed",
+            "internal_failure_kind": "runtime_error",
+        }
     return _node_result(state, "retrieve_documents", started, budget, updates, updates.get("retrieval_trace"))
 
 
@@ -266,7 +297,7 @@ def generate_response_node(state: AgentState) -> dict:
         usage = getattr(message, "usage_metadata", None) or message.response_metadata.get("token_usage", {}) if hasattr(message, "response_metadata") else {}
         metrics = {**state.get("metrics", {}), "generation_tokens": usage or {}, "generation_mode": "llm"}
         draft = message_text(message)
-    except Exception as exc:
+    except Exception:
         draft = deterministic_equation_answer(
             state.get("updated_query") or state["query"],
             state.get("student_answer", ""),
@@ -274,9 +305,9 @@ def generate_response_node(state: AgentState) -> dict:
             state.get("response_language", "zh"),
         )
         if not draft:
-            raise RuntimeError(f"生成模型不可用，且当前题型没有本地降级求解器: {exc}") from exc
+            raise RuntimeError("generation_failed")
         usage = {}
-        metrics = {**state.get("metrics", {}), "generation_tokens": {}, "generation_mode": "local_sympy", "model_error": str(exc)}
+        metrics = {**state.get("metrics", {}), "generation_tokens": {}, "generation_mode": "local_sympy"}
     updates = {"draft_response": draft, "metrics": metrics}
     return _node_result(state, "generate_response", started, budget, updates, {"draft_length": len(draft), "usage": usage})
 
@@ -298,15 +329,15 @@ def validate_answer_node(state: AgentState) -> dict:
             "deterministic_checks": json.dumps(deterministic, ensure_ascii=False),
         })
         critic["validation_mode"] = "llm"
-    except Exception as exc:
+    except Exception:
         local_passed = deterministic.get("passed", False) and bool(state.get("documents"))
         critic = {
             "is_valid": local_passed,
             "factual_faithfulness": bool(state.get("documents")),
             "math_logic_valid": deterministic.get("passed", False),
-            "issues": [] if local_passed else [f"Critic 服务异常: {exc}"],
+            "issues": [] if local_passed else ["独立校验未能完成"],
             "hallucination_detected": False,
-            "defect_report": f"LLM Critic 不可用，已降级为教材引用与 SymPy 校验: {exc}",
+            "defect_report": "已使用本地数学校验结果，独立语义校验未完成。",
             "validation_mode": "local_sympy",
         }
     issues = list(dict.fromkeys([*deterministic.get("issues", []), *guard_issues, *critic.get("issues", [])]))
@@ -349,81 +380,57 @@ def prepare_retry_node(state: AgentState) -> dict:
     return _node_result(state, "prepare_retry", started, budget, updates, {"attempt": updates["correction_attempts"]})
 
 
+def _failure_updates(
+    state: AgentState,
+    failure_kind: FailureKind,
+    issues: list[str],
+) -> dict:
+    resolved = resolve_failure(
+        query=state["query"],
+        language=state.get("response_language", "zh"),
+        history=list(state.get("conversation_history", [])),
+        summary=state.get("conversation_summary", ""),
+        failure_kind=failure_kind,
+        issues=issues,
+        verified_partial=state.get("verified_partial") or None,
+    )
+    policy_metrics = resolved.get("metrics", {})
+    return {
+        "draft_response": "",
+        "response": resolved["answer"],
+        "response_type": resolved["response_type"],
+        "conversation_history": resolved["conversation_history"],
+        "conversation_summary": resolved["conversation_summary"],
+        "validation_passed": resolved["validation_passed"],
+        "critic_report": {},
+        "needs_clarification": resolved["response_type"] == "clarification_required",
+        "clarification": resolved["clarification"],
+        "internal_failure_kind": failure_kind,
+        "metrics": {**state.get("metrics", {}), **policy_metrics},
+    }
+
+
 def clarification_response_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "clarify")
-    fallback = {
-        "zh": "题目信息不完整，请补充完整题干、图形条件、选项或你的错误步骤。",
-        "en": "The problem is incomplete. Please add the full question, diagram conditions, choices, or your incorrect steps.",
-    }
-    message = state.get("follow_up_question") or fallback[state.get("response_language", "zh")]
-    history = [*state.get("conversation_history", []), {"role": "student", "content": state["query"]}, {"role": "tutor", "content": message}]
-    missing = list(state.get("missing_conditions", [])) or [
-        "the full problem or diagram conditions"
-        if state.get("response_language", "zh") == "en"
-        else "完整题干或图形条件"
-    ]
-    updates = {
-        "draft_response": "",
-        "response": message,
-        "response_type": "clarification_required",
-        "conversation_history": history,
-        "validation_passed": True,
-        "critic_report": {},
-        "needs_clarification": True,
-        "clarification": {"missing": missing},
-    }
-    return _node_result(state, "clarify", started, budget, updates, {"follow_up": message})
+    updates = _failure_updates(state, "incomplete_input", list(state.get("missing_conditions", [])))
+    if state.get("follow_up_question"):
+        message = state["follow_up_question"]
+        updates["response"] = message
+        updates["conversation_history"][-1] = {"role": "tutor", "content": message}
+    return _node_result(state, "clarify", started, budget, updates, {"missing": updates["clarification"]["missing"]})
 
 
 def no_evidence_response_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "no_evidence")
-    message = {
-        "zh": "现有信息还不足以可靠解答这道题。请补充完整条件，或提供相关教材内容。",
-        "en": "There is not enough information to answer this problem reliably. Add the complete conditions or the relevant textbook material.",
-    }[state.get("response_language", "zh")]
-    history = [*state.get("conversation_history", []), {"role": "student", "content": state["query"]}, {"role": "tutor", "content": message}]
-    missing = [
-        "the complete conditions or relevant textbook information"
-        if state.get("response_language", "zh") == "en"
-        else "完整条件或相关教材信息"
-    ]
-    updates = {
-        "draft_response": "",
-        "response": message,
-        "response_type": "clarification_required",
-        "conversation_history": history,
-        "validation_passed": True,
-        "critic_report": {},
-        "needs_clarification": True,
-        "clarification": {"missing": missing},
-    }
-    return _node_result(state, "no_evidence", started, budget, updates, {"error": state.get("error")})
+    updates = _failure_updates(state, "retrieval_empty", list(state.get("validation_issues", [])))
+    return _node_result(state, "no_evidence", started, budget, updates, {"failure_kind": "retrieval_empty"})
 
 
 def validation_failure_response_node(state: AgentState) -> dict:
     started, budget = _node_start(state, "validation_failure")
-    if state.get("response_language", "zh") == "en":
-        message = "The current derivation cannot yet be presented as a reliable conclusion. Add the missing conditions or send a revised derivation."
-    else:
-        message = "当前推导还不能作为可靠结论。请补充缺失条件，或换一种推导继续核对。"
-    history = [*state.get("conversation_history", []), {"role": "tutor", "content": message}]
-    updates = {
-        "draft_response": "",
-        "response": message,
-        "response_type": "clarification_required",
-        "conversation_history": history,
-        "validation_passed": False,
-        "critic_report": {},
-        "needs_clarification": True,
-        "clarification": {
-            "missing": [
-                "a complete condition or a revised derivation"
-                if state.get("response_language", "zh") == "en"
-                else "完整条件或修改后的推导"
-            ]
-        },
-    }
-    return _node_result(state, "validation_failure", started, budget, updates, {"issues": state.get("validation_issues", [])})
+    issues = list(state.get("validation_issues", []))
+    updates = _failure_updates(state, "critic_rejected", issues)
+    return _node_result(state, "validation_failure", started, budget, updates, {"failure_kind": "critic_rejected", "issue_count": len(issues)})
 
 
 def consolidate_memory_node(state: AgentState) -> dict:
