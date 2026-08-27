@@ -18,6 +18,17 @@ class QueryInput(StrictModel):
     conversation_summary: str = Field(default="", max_length=12000)
 
 
+class CompletenessResult(StrictModel):
+    status: Literal[
+        "complete",
+        "missing_conditions",
+        "requires_image",
+        "out_of_scope",
+    ]
+    missing: list[str] = Field(default_factory=list)
+    follow_up: str = ""
+
+
 class GuardOutput(StrictModel):
     normalized_query: str
     allowed: bool = True
