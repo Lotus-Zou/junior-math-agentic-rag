@@ -17,6 +17,13 @@ from agentic_rag.skill_runtime.executor import SkillExecutor
 from agentic_rag.skill_runtime.registry import get_default_registry
 
 
+def value_at_path(value, dotted_path):
+    current = value
+    for part in dotted_path.split("."):
+        current = current.get(part) if isinstance(current, dict) else getattr(current, part, None)
+    return current
+
+
 def run() -> dict:
     executor = SkillExecutor(get_default_registry())
     failures, total = [], 0
@@ -37,6 +44,16 @@ def run() -> dict:
             for key, expected in case.get("expected", {}).items():
                 if actual.get(key) != expected:
                     reasons.append(f"{key}={actual.get(key)!r}")
+            for path, expected in case.get("expected_paths", {}).items():
+                if value_at_path(actual, path) != expected:
+                    reasons.append(f"{path}={value_at_path(actual, path)!r}")
+            for path in case.get("absent_paths", []):
+                if value_at_path(actual, path) is not None:
+                    reasons.append(f"{path} should be absent")
+            for path, forbidden_values in case.get("not_contains", {}).items():
+                for forbidden in forbidden_values:
+                    if forbidden in str(value_at_path(actual, path)):
+                        reasons.append(f"{path} contains {forbidden!r}")
             for key, expected in case.get("contains", {}).items():
                 if expected not in str(actual.get(key, "")):
                     reasons.append(f"{key} missing {expected!r}")

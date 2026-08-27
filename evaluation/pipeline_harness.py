@@ -17,6 +17,13 @@ from agentic_rag.skill_runtime.pipeline import PipelineExecutor, PipelineLoader
 from agentic_rag.skill_runtime.registry import get_default_registry
 
 
+def value_at_path(value, dotted_path):
+    current = value
+    for part in dotted_path.split("."):
+        current = current.get(part) if isinstance(current, dict) else getattr(current, part, None)
+    return current
+
+
 def run() -> dict:
     registry = get_default_registry()
     loader, runner = PipelineLoader(registry), PipelineExecutor(SkillExecutor(registry))
@@ -30,13 +37,23 @@ def run() -> dict:
             context = SkillContext(request_id=case["id"], trace_id=case["id"], deadline_at=datetime.now(timezone.utc) + timedelta(seconds=8))
             state = runner.run(pipeline, case["input"], context)
             node = state.get(case["expected_node"])
-            reason = ""
+            reasons = []
             if node is None:
-                reason = "expected node has no value"
+                reasons.append("expected node has no value")
             elif case.get("answer_contains") and case["answer_contains"] not in str(getattr(node, "answer", "")):
-                reason = f"answer missing {case['answer_contains']!r}"
-            if reason:
-                failures.append({"id": case["id"], "reason": reason, "safe_error": state.get("safe_error", "")})
+                reasons.append(f"answer missing {case['answer_contains']!r}")
+            for path, expected in case.get("expected_paths", {}).items():
+                if value_at_path(state, path) != expected:
+                    reasons.append(f"{path}={value_at_path(state, path)!r}")
+            for path in case.get("absent_paths", []):
+                if value_at_path(state, path) is not None:
+                    reasons.append(f"{path} should be absent")
+            for path, forbidden_values in case.get("not_contains", {}).items():
+                for forbidden in forbidden_values:
+                    if forbidden in str(value_at_path(state, path)):
+                        reasons.append(f"{path} contains {forbidden!r}")
+            if reasons:
+                failures.append({"id": case["id"], "reasons": reasons, "safe_error": state.get("safe_error", "")})
     return {"passed": not failures, "total": total, "failures": failures}
 
 

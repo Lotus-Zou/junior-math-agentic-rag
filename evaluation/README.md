@@ -38,6 +38,8 @@ python evaluation/evaluation.py --mode e2e --limit 0 --k 5 --version release
 python evaluation/evaluation.py --mode gate
 ```
 
+`skill_harness.py` 与 `pipeline_harness.py` 同时支持原有的顶层 `expected`、`contains` 和 `answer_contains` 断言，以及 `expected_paths` 点路径断言。点路径可以检查嵌套的 Skill 响应，例如 `response.response_type`；Pipeline case 则针对完整执行 state，例如 `curriculum_solve.response.response_type`。`absent_paths` 与 `not_contains` 固化公开响应不能泄露内部报告、验证证据、隐藏答案或内部失败文案。本地对话控制回归覆盖 `几何`、`代数`、`一次函数`、`换个问题`、`难一点` 和 `简单一点`，并固定其零工具调用路径。
+
 检索模式使用透明的关键词 `Context Precision/Recall` 与知识点匹配率；E2E 模式增加意图、错因、步骤、直接答案违规和幻觉检出指标；RAGAS 负责 `Context Precision`、`Context Recall`、`Faithfulness`、`Answer Relevance`。
 
 历史口径为 Recall 提升 15%、幻觉率 `35% -> 10%`、Answer Relevance `0.50 -> 0.78`，当前工作区尚未全量复现。10 条 smoke A/B 的三种策略 Context Recall 均为 `0.9667`，不构成提升证据。
