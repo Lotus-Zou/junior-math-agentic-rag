@@ -165,6 +165,7 @@ class PublicExerciseState(StrictModel):
     difficulty: int | None = None
     exercise_type: str | None = None
     template_id: str | None = None
+    fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class PublicClarification(StrictModel):

@@ -14,6 +14,7 @@ from agentic_rag.local_intents import parse_local_command
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
 from agentic_rag.response_contract import (
     ValidatedExerciseState,
+    exercise_public_fingerprint,
     normalize_response,
     validated_exercise_state,
 )
@@ -70,13 +71,17 @@ class EquationExerciseTemplate:
 @dataclass(frozen=True)
 class GeometryExerciseTemplate:
     template_id: str
+    validator_kind: str
+    parameters: tuple[tuple[str, int], ...]
+
+
+@dataclass(frozen=True)
+class RenderedGeometryExercise:
     problem: str
     hint: str
     knowledge_points: tuple[str, ...]
-    required_groups: tuple[tuple[str, ...], ...]
     hidden_answer: str
-    validator_kind: str
-    parameters: tuple[tuple[str, int], ...]
+    public_fingerprint: str
 
 
 ZH_EXERCISES = (
@@ -96,67 +101,29 @@ EN_EXERCISES = (
 ZH_GEOMETRY_EXERCISES = (
     GeometryExerciseTemplate(
         "geometry-isosceles-40",
-        "在等腰三角形 ABC 中，AB = AC，顶角 ∠A = 40°。求 ∠B 和 ∠C 的度数。",
-        "先利用等腰三角形两个底角相等，再结合三角形内角和为 180°。",
-        ("等腰三角形", "三角形内角和"),
-        (("b", "∠b"), ("c", "∠c"), ("70",)),
-        "∠B = ∠C，且 ∠B + ∠C = 180° - 40° = 140°，所以 ∠B = ∠C = 70°。",
         "isosceles",
         (("vertex_angle", 40),),
     ),
     GeometryExerciseTemplate(
         "geometry-angle-ratio-234",
-        "一个三角形三个内角的度数之比为 2:3:4，求这三个内角的度数，并判断它是什么三角形。",
-        "可把三个角分别设为 2k、3k、4k，再使用三角形内角和。",
-        ("三角形内角和", "方程思想"),
-        (("40",), ("60",), ("80",), ("锐角",)),
-        "设三个角为 2k、3k、4k，则 9k = 180°，k = 20°，三个角为 40°、60°、80°，所以是锐角三角形。",
         "angle_ratio",
         (("first", 2), ("second", 3), ("third", 4)),
     ),
     GeometryExerciseTemplate(
         "geometry-sas-proof",
-        "在 △ABC 和 △DEF 中，已知 AB = DE、AC = DF、∠A = ∠D。请证明 △ABC ≌ △DEF，并写出判定依据。",
-        "先确认已知角是不是两组已知边的夹角。",
-        ("全等三角形", "边角边判定"),
-        (("sas", "边角边"), ("全等", "≌")),
-        "∠A 与 ∠D 分别是 AB、AC 和 DE、DF 的夹角，因此由边角边（SAS）可得 △ABC ≌ △DEF。",
         "sas",
         (),
     ),
     GeometryExerciseTemplate(
         "geometry-right-bisector",
-        "直角三角形 ABC 中，∠C = 90°，∠A = 35°。求 ∠B；若 CD 是 ∠ACB 的平分线，再求 ∠ACD。",
-        "分别使用三角形内角和与角平分线的定义。",
-        ("直角三角形", "角平分线", "三角形内角和"),
-        (("55",), ("45",)),
-        "∠B = 180° - 90° - 35° = 55°；CD 平分 90° 的 ∠ACB，所以 ∠ACD = 45°。",
         "right_bisector",
         (("angle_a", 35),),
     ),
 )
 
 EN_GEOMETRY_EXERCISES = (
-    GeometryExerciseTemplate(
-        "geometry-isosceles-40",
-        "In isosceles triangle ABC, AB = AC and the vertex angle A is 40°. Find angles B and C.",
-        "Use the equal base angles of an isosceles triangle and the 180° angle sum.",
-        ("Isosceles triangles", "Triangle angle sum"),
-        (("b",), ("c",), ("70",)),
-        "Angles B and C are equal and sum to 140°, so B = C = 70°.",
-        "isosceles",
-        (("vertex_angle", 40),),
-    ),
-    GeometryExerciseTemplate(
-        "geometry-angle-ratio-234",
-        "The angles of a triangle are in the ratio 2:3:4. Find all three angles and classify the triangle.",
-        "Represent the angles by 2k, 3k, and 4k, then use their sum.",
-        ("Triangle angle sum", "Algebraic modeling"),
-        (("40",), ("60",), ("80",), ("acute",)),
-        "Since 2k + 3k + 4k = 180°, k = 20°. The angles are 40°, 60°, and 80°, so it is acute.",
-        "angle_ratio",
-        (("first", 2), ("second", 3), ("third", 4)),
-    ),
+    ZH_GEOMETRY_EXERCISES[0],
+    ZH_GEOMETRY_EXERCISES[1],
 )
 
 @dataclass(frozen=True)
@@ -164,7 +131,7 @@ class LocalExerciseTemplate:
     template_id: str
     topic: str
     parameters: tuple[tuple[str, int], ...]
-    hidden_answer: str
+    hidden_answer: str | None = None
 
 
 LOCAL_TRANSITION_TEMPLATES = {
@@ -173,8 +140,8 @@ LOCAL_TRANSITION_TEMPLATES = {
         LocalExerciseTemplate("topic-algebra-2", "algebra", (("coefficient", 5), ("constant", 7), ("total", 32)), "x = 5"),
     ),
     "geometry": (
-        LocalExerciseTemplate("topic-geometry-1", "geometry", (("vertex_angle", 40),), "\u2220B = \u2220C = 70\u00b0"),
-        LocalExerciseTemplate("topic-geometry-2", "geometry", (("vertex_angle", 60),), "\u2220B = \u2220C = 60\u00b0"),
+        LocalExerciseTemplate("topic-geometry-1", "geometry", (("vertex_angle", 40),)),
+        LocalExerciseTemplate("topic-geometry-2", "geometry", (("vertex_angle", 60),)),
     ),
     "linear_function": (
         LocalExerciseTemplate("topic-linear-function-1", "linear_function", (("slope", 2), ("intercept", 1), ("x_value", 3), ("y_value", 9)), "y = 7; x = 4"),
@@ -279,11 +246,20 @@ def _validate_transition_template(
         problem, hint, knowledge_points, expected_answer = _render_transition_template(template, language)
     except (KeyError, TypeError, ValueError):
         return "", "", [], None
+    if template.topic == "geometry":
+        if template.hidden_answer is not None:
+            return "", "", [], None
+        hidden_answer = expected_answer
+    else:
+        hidden_answer = template.hidden_answer or ""
     private_state = validated_exercise_state(
         template.template_id,
         template.topic,
-        template.hidden_answer,
+        hidden_answer,
         expected_answer,
+        exercise_public_fingerprint(
+            template.template_id, template.topic, problem, hint
+        ),
     )
     return problem, hint, knowledge_points, private_state
 
@@ -311,8 +287,13 @@ def _active_exercise_topic(history: list[dict[str, str]], language: str) -> str 
         for label, topic in labels.items():
             if label in content:
                 return topic
-        if any(template.problem in content for template in geometry):
-            return "geometry"
+        for template in geometry:
+            try:
+                rendered = _render_geometry_template(template, language)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if rendered.problem in content:
+                return "geometry"
         if any(template.equation in content for template in equations):
             return "algebra"
         for topic, templates in LOCAL_TRANSITION_TEMPLATES.items():
@@ -389,6 +370,7 @@ def _local_guided_exercise(
             "topic": topic,
             "difficulty_delta": difficulty_delta,
             "template_id": template.template_id,
+            "fingerprint": private_state.public_fingerprint,
         },
         "metrics": {"tool_calls": 0},
     })
@@ -470,16 +452,16 @@ def _geometry_context(history: list[dict[str, str]], language: str):
     for message in reversed(history or []):
         content = str(message.get("content", ""))
         for exercise in exercises:
-            if exercise.problem in content:
-                solved = _solve_geometry_hidden_answer(exercise, language)
-                private_state = validated_exercise_state(
-                    exercise.template_id,
-                    "geometry",
-                    exercise.hidden_answer,
-                    solved,
+            try:
+                rendered = _render_geometry_template(exercise, language)
+            except (KeyError, TypeError, ValueError):
+                continue
+            if rendered.problem in content:
+                private_state = _validate_geometry_template(
+                    exercise, language, rendered
                 )
                 if private_state is not None:
-                    return exercise, private_state
+                    return exercise, rendered, private_state
     return None
 
 
@@ -497,49 +479,305 @@ def _solve_equation_hidden_answer(template: EquationExerciseTemplate) -> str:
     return f"x = {(total - constant) // coefficient}"
 
 
-def _solve_geometry_hidden_answer(
+def _render_geometry_template(
     template: GeometryExerciseTemplate, language: str
-) -> str:
+) -> RenderedGeometryExercise:
+    if language not in {"zh", "en"}:
+        raise ValueError("unsupported geometry exercise language")
     parameters = dict(template.parameters)
+    if len(parameters) != len(template.parameters):
+        raise ValueError("geometry template has duplicate parameters")
     if template.validator_kind == "isosceles":
+        if set(parameters) != {"vertex_angle"}:
+            raise ValueError("isosceles template has invalid parameters")
         vertex = parameters["vertex_angle"]
         if not 0 < vertex < 180 or (180 - vertex) % 2:
-            return ""
+            raise ValueError("isosceles template has invalid triangle angles")
         base = (180 - vertex) // 2
         if language == "en":
-            return f"Angles B and C are equal and sum to {180 - vertex}°, so B = C = {base}°."
-        return (
-            f"∠B = ∠C，且 ∠B + ∠C = 180° - {vertex}° = {180 - vertex}°，"
-            f"所以 ∠B = ∠C = {base}°。"
-        )
-    if template.validator_kind == "angle_ratio":
+            problem = (
+                f"In isosceles triangle ABC, AB = AC and the vertex angle A is "
+                f"{vertex}°. Find angles B and C."
+            )
+            hint = "Use the equal base angles of an isosceles triangle and the 180° angle sum."
+            knowledge_points = ("Isosceles triangles", "Triangle angle sum")
+            hidden_answer = (
+                f"Angles B and C are equal and sum to {180 - vertex}°, so "
+                f"B = C = {base}°."
+            )
+        else:
+            problem = (
+                f"在等腰三角形 ABC 中，AB = AC，顶角 ∠A = {vertex}°。"
+                "求 ∠B 和 ∠C 的度数。"
+            )
+            hint = "先利用等腰三角形两个底角相等，再结合三角形内角和为 180°。"
+            knowledge_points = ("等腰三角形", "三角形内角和")
+            hidden_answer = (
+                f"∠B = ∠C，且 ∠B + ∠C = 180° - {vertex}° = {180 - vertex}°，"
+                f"所以 ∠B = ∠C = {base}°。"
+            )
+    elif template.validator_kind == "angle_ratio":
+        if set(parameters) != {"first", "second", "third"}:
+            raise ValueError("angle-ratio template has invalid parameters")
         ratio = [parameters[key] for key in ("first", "second", "third")]
         total = sum(ratio)
-        if total <= 0 or 180 % total:
-            return ""
+        if any(item <= 0 for item in ratio) or 180 % total:
+            raise ValueError("angle-ratio template has invalid triangle angles")
         unit = 180 // total
         angles = [item * unit for item in ratio]
+        classification = "acute" if max(angles) < 90 else "right" if max(angles) == 90 else "obtuse"
         if language == "en":
-            return (
-                f"Since {ratio[0]}k + {ratio[1]}k + {ratio[2]}k = 180°, k = {unit}°. "
-                f"The angles are {angles[0]}°, {angles[1]}°, and {angles[2]}°, so it is acute."
+            problem = (
+                f"The angles of a triangle are in the ratio {ratio[0]}:{ratio[1]}:{ratio[2]}. "
+                "Find all three angles and classify the triangle."
             )
-        return (
-            f"设三个角为 {ratio[0]}k、{ratio[1]}k、{ratio[2]}k，则 {total}k = 180°，"
-            f"k = {unit}°，三个角为 {angles[0]}°、{angles[1]}°、{angles[2]}°，所以是锐角三角形。"
-        )
-    if template.validator_kind == "sas" and language == "zh":
-        return "∠A 与 ∠D 分别是 AB、AC 和 DE、DF 的夹角，因此由边角边（SAS）可得 △ABC ≌ △DEF。"
-    if template.validator_kind == "right_bisector" and language == "zh":
+            hint = (
+                f"Represent the angles by {ratio[0]}k, {ratio[1]}k, and {ratio[2]}k, "
+                "then use their sum."
+            )
+            knowledge_points = ("Triangle angle sum", "Algebraic modeling")
+            hidden_answer = (
+                f"Since {ratio[0]}k + {ratio[1]}k + {ratio[2]}k = 180°, k = {unit}°. "
+                f"The angles are {angles[0]}°, {angles[1]}°, and {angles[2]}°, "
+                f"so it is {classification}."
+            )
+        else:
+            problem = (
+                f"一个三角形三个内角的度数之比为 {ratio[0]}:{ratio[1]}:{ratio[2]}，"
+                "求这三个内角的度数，并判断它是什么三角形。"
+            )
+            hint = (
+                f"可把三个角分别设为 {ratio[0]}k、{ratio[1]}k、{ratio[2]}k，"
+                "再使用三角形内角和。"
+            )
+            knowledge_points = ("三角形内角和", "方程思想")
+            zh_classification = {"acute": "锐角", "right": "直角", "obtuse": "钝角"}[
+                classification
+            ]
+            hidden_answer = (
+                f"设三个角为 {ratio[0]}k、{ratio[1]}k、{ratio[2]}k，则 {total}k = 180°，"
+                f"k = {unit}°，三个角为 {angles[0]}°、{angles[1]}°、{angles[2]}°，"
+                f"所以是{zh_classification}三角形。"
+            )
+    elif template.validator_kind == "sas":
+        if parameters:
+            raise ValueError("SAS template must not have numeric parameters")
+        if language == "en":
+            problem = (
+                "In triangles ABC and DEF, AB = DE, AC = DF, and angle A = angle D. "
+                "Prove that triangle ABC is congruent to triangle DEF and state the criterion."
+            )
+            hint = "Check whether the known equal angles are included between the known equal sides."
+            knowledge_points = ("Congruent triangles", "SAS congruence")
+            hidden_answer = (
+                "Angles A and D are included between AB, AC and DE, DF respectively, "
+                "so triangle ABC is congruent to triangle DEF by SAS."
+            )
+        else:
+            problem = (
+                "在 △ABC 和 △DEF 中，已知 AB = DE、AC = DF、∠A = ∠D。"
+                "请证明 △ABC ≌ △DEF，并写出判定依据。"
+            )
+            hint = "先确认已知角是不是两组已知边的夹角。"
+            knowledge_points = ("全等三角形", "边角边判定")
+            hidden_answer = (
+                "∠A 与 ∠D 分别是 AB、AC 和 DE、DF 的夹角，因此由边角边（SAS）"
+                "可得 △ABC ≌ △DEF。"
+            )
+    elif template.validator_kind == "right_bisector":
+        if set(parameters) != {"angle_a"}:
+            raise ValueError("right-bisector template has invalid parameters")
         angle_a = parameters["angle_a"]
         angle_b = 90 - angle_a
         if not 0 < angle_b < 90:
-            return ""
-        return (
-            f"∠B = 180° - 90° - {angle_a}° = {angle_b}°；CD 平分 90° 的 ∠ACB，"
-            "所以 ∠ACD = 45°。"
+            raise ValueError("right-bisector template has invalid triangle angles")
+        if language == "en":
+            problem = (
+                f"In right triangle ABC, angle C = 90° and angle A = {angle_a}°. "
+                "Find angle B; if CD bisects angle ACB, also find angle ACD."
+            )
+            hint = "Use the triangle angle sum, then the definition of an angle bisector."
+            knowledge_points = ("Right triangles", "Angle bisectors", "Triangle angle sum")
+            hidden_answer = (
+                f"Angle B = 180° - 90° - {angle_a}° = {angle_b}°. CD bisects the "
+                "90° angle ACB, so angle ACD = 45°."
+            )
+        else:
+            problem = (
+                f"直角三角形 ABC 中，∠C = 90°，∠A = {angle_a}°。求 ∠B；"
+                "若 CD 是 ∠ACB 的平分线，再求 ∠ACD。"
+            )
+            hint = "分别使用三角形内角和与角平分线的定义。"
+            knowledge_points = ("直角三角形", "角平分线", "三角形内角和")
+            hidden_answer = (
+                f"∠B = 180° - 90° - {angle_a}° = {angle_b}°；"
+                "CD 平分 90° 的 ∠ACB，所以 ∠ACD = 45°。"
+            )
+    else:
+        raise ValueError("unsupported geometry validator kind")
+
+    return RenderedGeometryExercise(
+        problem=problem,
+        hint=hint,
+        knowledge_points=knowledge_points,
+        hidden_answer=hidden_answer,
+        public_fingerprint=exercise_public_fingerprint(
+            template.template_id, "geometry", problem, hint
+        ),
+    )
+
+
+def _validate_geometry_template(
+    template: GeometryExerciseTemplate,
+    language: str,
+    rendered: RenderedGeometryExercise,
+) -> ValidatedExerciseState | None:
+    try:
+        canonical = _render_geometry_template(template, language)
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not isinstance(rendered, RenderedGeometryExercise) or rendered != canonical:
+        return None
+    return validated_exercise_state(
+        template.template_id,
+        "geometry",
+        canonical.hidden_answer,
+        rendered.hidden_answer,
+        canonical.public_fingerprint,
+    )
+
+
+def _contains_answer_negation(answer: str) -> bool:
+    return bool(
+        re.search(
+            r"不是|不等于|不全等|≠|!=|\b(?:not|never|no|isn't|isnt|aren't|arent|"
+            r"doesn't|doesnt|don't|dont)\b",
+            answer,
+            flags=re.IGNORECASE,
         )
-    return ""
+    )
+
+
+_ANGLE_LABEL = r"(?:∠\s*(?:acd|b|c)|angle\s+(?:acd|b|c)|\b(?:acd|b|c)\b)"
+
+
+def _angle_label(value: str) -> str:
+    return re.sub(r"∠|angle|\s", "", value, flags=re.IGNORECASE).lower()
+
+
+def _angle_assignments(answer: str) -> dict[str, list[float]]:
+    assignments: dict[str, list[float]] = {}
+
+    def add(label: str, value: str) -> None:
+        assignments.setdefault(_angle_label(label), []).append(float(value))
+
+    chain_pattern = re.compile(
+        rf"(?P<first>{_ANGLE_LABEL})\s*=\s*(?P<second>{_ANGLE_LABEL})\s*=\s*"
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
+        flags=re.IGNORECASE,
+    )
+    for match in chain_pattern.finditer(answer):
+        add(match.group("first"), match.group("value"))
+        add(match.group("second"), match.group("value"))
+
+    grouped_pattern = re.compile(
+        rf"(?P<first>{_ANGLE_LABEL})\s*(?:和|与|and)\s*(?P<second>{_ANGLE_LABEL})"
+        r"\s*(?:都|both)?\s*(?:=|为|是|are|equal)\s*"
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
+        flags=re.IGNORECASE,
+    )
+    for match in grouped_pattern.finditer(answer):
+        add(match.group("first"), match.group("value"))
+        add(match.group("second"), match.group("value"))
+
+    direct_pattern = re.compile(
+        rf"(?P<label>{_ANGLE_LABEL})\s*(?:=|为|是|equals?|is)\s*"
+        r"(?P<value>\d+(?:\.\d+)?)\s*(?:°|degrees?)?",
+        flags=re.IGNORECASE,
+    )
+    for match in direct_pattern.finditer(answer):
+        add(match.group("label"), match.group("value"))
+    return assignments
+
+
+def _expected_angle_assignments(
+    answer: str, expected: dict[str, int]
+) -> bool:
+    assignments = _angle_assignments(answer)
+    return all(
+        label in assignments
+        and assignments[label]
+        and all(value == expected_value for value in assignments[label])
+        for label, expected_value in expected.items()
+    )
+
+
+def _geometry_answer_is_correct(
+    template: GeometryExerciseTemplate, student_answer: str, language: str
+) -> bool:
+    normalized = unicodedata.normalize("NFKC", student_answer or "").strip().lower()
+    if not normalized or _contains_answer_negation(normalized):
+        return False
+    try:
+        rendered = _render_geometry_template(template, language)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if _validate_geometry_template(template, language, rendered) is None:
+        return False
+
+    parameters = dict(template.parameters)
+    if template.validator_kind == "isosceles":
+        base_angle = (180 - parameters["vertex_angle"]) // 2
+        return _expected_angle_assignments(
+            normalized, {"b": base_angle, "c": base_angle}
+        )
+    if template.validator_kind == "right_bisector":
+        return _expected_angle_assignments(
+            normalized, {"b": 90 - parameters["angle_a"], "acd": 45}
+        )
+    if template.validator_kind == "angle_ratio":
+        ratio = [parameters[key] for key in ("first", "second", "third")]
+        unit = 180 // sum(ratio)
+        expected_angles = sorted(item * unit for item in ratio)
+        claimed_angles = [
+            int(value)
+            for value in re.findall(r"(\d+)\s*(?:°|degrees?)", normalized)
+        ]
+        if len(claimed_angles) < 3 or sorted(claimed_angles[-3:]) != expected_angles:
+            return False
+        classifications = {
+            "acute": bool(re.search(r"锐角|\bacute\b", normalized)),
+            "right": bool(re.search(r"直角三角形|\bright(?:-angled)?\s+triangle\b", normalized)),
+            "obtuse": bool(re.search(r"钝角|\bobtuse\b", normalized)),
+        }
+        expected_classification = (
+            "acute" if max(expected_angles) < 90 else "right" if max(expected_angles) == 90 else "obtuse"
+        )
+        return classifications[expected_classification] and not any(
+            present
+            for classification, present in classifications.items()
+            if classification != expected_classification
+        )
+    if template.validator_kind == "sas":
+        compact = re.sub(r"\s+", "", normalized)
+        relation_ok = (
+            "△abc≌△def" in compact
+            or "abc≌def" in compact
+            or bool(re.search(r"abc(?:与|和)def(?:全等|是全等)", compact))
+            or bool(
+                re.search(
+                    r"(?:triangle\s+)?abc\s+(?:is\s+)?congruent\s+to\s+"
+                    r"(?:triangle\s+)?def",
+                    normalized,
+                )
+            )
+        )
+        criterion_ok = "边角边" in normalized or bool(re.search(r"\bsas\b", normalized))
+        contradictory_criterion = bool(
+            re.search(r"边边边|角边角|角角边|\b(?:sss|asa|aas|rhs|hl)\b", normalized)
+        )
+        return relation_ok and criterion_ok and not contradictory_criterion
+    return False
 
 
 def _base_response(query: str, answer: str, history: list[dict[str, str]], summary: str) -> dict:
@@ -607,11 +845,15 @@ def _similar_exercise_response(query: str, history: list[dict[str, str]], summar
     index = hashlib.sha256(seed.encode("utf-8")).digest()[0] % len(exercises)
     template = exercises[index]
     solved_answer = _solve_equation_hidden_answer(template)
+    public_fingerprint = exercise_public_fingerprint(
+        template.template_id, "algebra", template.equation, template.hint
+    )
     private_state = validated_exercise_state(
         template.template_id,
         "algebra",
         template.hidden_answer,
         solved_answer,
+        public_fingerprint,
     )
     if private_state is None:
         return _invalid_local_template_response(query, history, summary, language)
@@ -637,6 +879,7 @@ def _similar_exercise_response(query: str, history: list[dict[str, str]], summar
             "topic": "algebra",
             "difficulty_delta": 0,
             "template_id": template.template_id,
+            "fingerprint": public_fingerprint,
         },
         "metrics": {"tool_calls": 0},
     })
@@ -651,38 +894,37 @@ def _geometry_exercise_response(query: str, history: list[dict[str, str]], summa
     exercises = EN_GEOMETRY_EXERCISES if language == "en" else ZH_GEOMETRY_EXERCISES
     seed = f"{query}\n" + "\n".join(str(item.get("content", "")) for item in history)
     template = exercises[hashlib.sha256(seed.encode("utf-8")).digest()[0] % len(exercises)]
-    solved_answer = _solve_geometry_hidden_answer(template, language)
-    private_state = validated_exercise_state(
-        template.template_id,
-        "geometry",
-        template.hidden_answer,
-        solved_answer,
-    )
+    try:
+        rendered = _render_geometry_template(template, language)
+    except (KeyError, TypeError, ValueError):
+        return _invalid_local_template_response(query, history, summary, language)
+    private_state = _validate_geometry_template(template, language, rendered)
     if private_state is None:
         return _invalid_local_template_response(query, history, summary, language)
     if language == "en":
         answer = (
-            f"**Geometry exercise**\n{template.problem}\n\n"
-            f"**Hint**\n{template.hint} [1]\n\n"
+            f"**Geometry exercise**\n{rendered.problem}\n\n"
+            f"**Hint**\n{rendered.hint} [1]\n\n"
             "Write out your reasoning and send it to me. I will check it step by step; the answer is hidden for now."
         )
     else:
         answer = (
-            f"**几何练习**\n{template.problem}\n\n"
-            f"**提示**\n{template.hint} [1]\n\n"
+            f"**几何练习**\n{rendered.problem}\n\n"
+            f"**提示**\n{rendered.hint} [1]\n\n"
             "请写出推导过程后发给我，我会逐步检查；答案暂不展示。"
         )
     response = _base_response(query, answer, history, summary)
     response["sources"] = [{**CORE_SOURCE, "chapter": "几何"}]
     response.update({
         "intent": "geometry_exercise",
-        "knowledge_points": list(template.knowledge_points),
+        "knowledge_points": list(rendered.knowledge_points),
         "validation_passed": True,
         "validation_evidence": {"kind": "deterministic", "passed": True},
         "exercise_state": {
             "topic": "geometry",
             "difficulty_delta": 0,
             "template_id": template.template_id,
+            "fingerprint": rendered.public_fingerprint,
         },
         "metrics": {"tool_calls": 0},
     })
@@ -695,38 +937,36 @@ def _geometry_answer_response(query: str, history: list[dict[str, str]], summary
     exercise = _geometry_context(history, language)
     if not exercise:
         return None
-    template, private_state = exercise
+    template, rendered, private_state = exercise
     normalized = (query or "").strip().lower()
     asks_for_hint = any(marker in normalized for marker in ("提示", "不会", "没思路", "hint", "stuck"))
-    passed = all(
-        any(token.lower() in normalized for token in group)
-        for group in template.required_groups
-    )
+    passed = _geometry_answer_is_correct(template, query, language)
     if language == "en":
         answer = (
-            f"**Another hint**\n{template.hint}\nTry writing the key equality or theorem first; the answer remains hidden."
+            f"**Another hint**\n{rendered.hint}\nTry writing the key equality or theorem first; the answer remains hidden."
             if asks_for_hint else
-            (f"**Check passed**\nYour conclusion is correct.\n\n**Reasoning**\n{template.hidden_answer}" if passed else
-             f"**Not quite yet**\nThe conclusion is incomplete or contains an error. Recheck this point: {template.hint} I will keep the answer hidden while you revise it.")
+            (f"**Check passed**\nYour conclusion is correct.\n\n**Reasoning**\n{rendered.hidden_answer}" if passed else
+             f"**Not quite yet**\nThe conclusion is incomplete or contains an error. Recheck this point: {rendered.hint} I will keep the answer hidden while you revise it.")
         )
     else:
         answer = (
-            f"**再给一个提示**\n{template.hint}\n先把关键等式或判定依据写出来，答案继续隐藏。"
+            f"**再给一个提示**\n{rendered.hint}\n先把关键等式或判定依据写出来，答案继续隐藏。"
             if asks_for_hint else
-            (f"**检查通过**\n你的结论正确。\n\n**完整推导**\n{template.hidden_answer}" if passed else
-             f"**暂未通过**\n你的结论还不完整或存在错误。请重点检查：{template.hint} 我会继续隐藏答案，等你修改后再核对。")
+            (f"**检查通过**\n你的结论正确。\n\n**完整推导**\n{rendered.hidden_answer}" if passed else
+             f"**暂未通过**\n你的结论还不完整或存在错误。请重点检查：{rendered.hint} 我会继续隐藏答案，等你修改后再核对。")
         )
     response = _base_response(query, answer, history, summary)
     response["sources"] = [{**CORE_SOURCE, "chapter": "几何"}]
     response.update({
         "intent": "geometry_answer_check" if not asks_for_hint else "geometry_hint",
-        "knowledge_points": list(template.knowledge_points),
+        "knowledge_points": list(rendered.knowledge_points),
         "validation_passed": True,
         "validation_evidence": {"kind": "deterministic", "passed": True},
         "exercise_state": {
             "topic": "geometry",
             "difficulty_delta": 0,
             "template_id": template.template_id,
+            "fingerprint": rendered.public_fingerprint,
         },
         "metrics": {"tool_calls": 0},
     })

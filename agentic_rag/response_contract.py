@@ -60,13 +60,48 @@ class ValidatedExerciseState:
 
     template_id: str
     topic: str
+    public_fingerprint: str
     hidden_answer: str
     validation_digest: str
 
 
-def _exercise_digest(template_id: str, topic: str, hidden_answer: str) -> str:
+def _canonical_sha256(value: Any) -> str:
     payload = json.dumps(
-        [template_id, topic, hidden_answer], ensure_ascii=False, separators=(",", ":")
+        value,
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def public_response_digest(public_response: dict[str, Any]) -> str:
+    """Hash a public response using stable canonical JSON serialization."""
+    return _canonical_sha256(public_response)
+
+
+def exercise_public_fingerprint(
+    template_id: str, topic: str, problem: str, hint: str
+) -> str:
+    """Identify the exact public exercise prompt without exposing its answer."""
+    return _canonical_sha256(
+        {
+            "hint": hint,
+            "problem": problem,
+            "template_id": template_id,
+            "topic": topic,
+        }
+    )
+
+
+def _exercise_digest(
+    template_id: str, topic: str, public_fingerprint: str, hidden_answer: str
+) -> str:
+    payload = json.dumps(
+        [template_id, topic, public_fingerprint, hidden_answer],
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -76,18 +111,28 @@ def validated_exercise_state(
     topic: str,
     hidden_answer: str,
     solved_answer: str,
+    public_fingerprint: str,
 ) -> ValidatedExerciseState | None:
     """Create private exercise state only when a deterministic solver agrees."""
-    values = (template_id.strip(), topic.strip(), hidden_answer.strip(), solved_answer.strip())
+    values = (
+        template_id.strip(),
+        topic.strip(),
+        hidden_answer.strip(),
+        solved_answer.strip(),
+        public_fingerprint.strip(),
+    )
     if not all(values) or not hmac.compare_digest(
         values[2].encode("utf-8"), values[3].encode("utf-8")
     ):
         return None
+    if len(values[4]) != 64 or any(character not in "0123456789abcdef" for character in values[4]):
+        return None
     return ValidatedExerciseState(
         template_id=values[0],
         topic=values[1],
+        public_fingerprint=values[4],
         hidden_answer=values[2],
-        validation_digest=_exercise_digest(values[0], values[1], values[2]),
+        validation_digest=_exercise_digest(values[0], values[1], values[4], values[2]),
     )
 
 
@@ -95,7 +140,11 @@ def restore_validated_exercise_state(candidate: Any) -> ValidatedExerciseState |
     if isinstance(candidate, ValidatedExerciseState):
         state = candidate
     elif isinstance(candidate, dict) and set(candidate) == {
-        "template_id", "topic", "hidden_answer", "validation_digest"
+        "template_id",
+        "topic",
+        "public_fingerprint",
+        "hidden_answer",
+        "validation_digest",
     }:
         try:
             state = ValidatedExerciseState(**candidate)
@@ -103,7 +152,28 @@ def restore_validated_exercise_state(candidate: Any) -> ValidatedExerciseState |
             return None
     else:
         return None
-    expected = _exercise_digest(state.template_id, state.topic, state.hidden_answer)
+    if not all(
+        isinstance(value, str)
+        for value in (
+            state.template_id,
+            state.topic,
+            state.public_fingerprint,
+            state.hidden_answer,
+            state.validation_digest,
+        )
+    ):
+        return None
+    if len(state.public_fingerprint) != 64 or any(
+        character not in "0123456789abcdef"
+        for character in state.public_fingerprint
+    ):
+        return None
+    expected = _exercise_digest(
+        state.template_id,
+        state.topic,
+        state.public_fingerprint,
+        state.hidden_answer,
+    )
     if not hmac.compare_digest(state.validation_digest, expected):
         return None
     return state
@@ -113,6 +183,7 @@ def private_exercise_payload(state: ValidatedExerciseState) -> dict[str, str]:
     return {
         "template_id": state.template_id,
         "topic": state.topic,
+        "public_fingerprint": state.public_fingerprint,
         "hidden_answer": state.hidden_answer,
         "validation_digest": state.validation_digest,
     }
@@ -123,7 +194,9 @@ def response_validation_digest(answer: str) -> str:
 
 
 def _store_skill_contract(
-    evidence: Any, private_exercise: ValidatedExerciseState | None
+    evidence: Any,
+    private_exercise: ValidatedExerciseState | None,
+    public_response_sha256: str,
 ) -> None:
     capture = _skill_contract_capture.get()
     if capture is None:
@@ -135,6 +208,7 @@ def _store_skill_contract(
     ):
         contract = {
             "validation_evidence": {"kind": evidence["kind"], "passed": True},
+            "public_response_sha256": public_response_sha256,
         }
         if private_exercise is not None:
             contract["private_exercise_state"] = private_exercise_payload(private_exercise)
@@ -196,10 +270,18 @@ def normalize_response(
         and evidence.get("passed") is True
     )
     private_exercise = restore_validated_exercise_state(private_exercise)
+    public_exercise = payload.get("exercise_state")
+    guided_binding_ok = (
+        isinstance(public_exercise, dict)
+        and private_exercise is not None
+        and public_exercise.get("template_id") == private_exercise.template_id
+        and public_exercise.get("topic") == private_exercise.topic
+        and public_exercise.get("fingerprint") == private_exercise.public_fingerprint
+    )
     if response_type in {"verified_answer", "guided_exercise"} and (
         payload.get("validation_passed") is not True
         or not evidence_ok
-        or (response_type == "guided_exercise" and private_exercise is None)
+        or (response_type == "guided_exercise" and not guided_binding_ok)
     ):
         raise ValueError(f"{response_type} requires explicit passing validation evidence")
 
@@ -221,7 +303,14 @@ def normalize_response(
         result["exercise_state"] = _project_model(
             PublicExerciseState,
             result["exercise_state"],
-            ("topic", "difficulty_delta", "difficulty", "exercise_type", "template_id"),
+            (
+                "topic",
+                "difficulty_delta",
+                "difficulty",
+                "exercise_type",
+                "template_id",
+                "fingerprint",
+            ),
         )
     else:
         result["exercise_state"] = None
@@ -243,9 +332,16 @@ def normalize_response(
     else:
         result["metrics"] = {}
     result["response_type"] = response_type
+    validated_result = ResponseEnvelope.model_validate(result).model_dump(
+        mode="json", exclude_unset=True
+    )
     if response_type in {"verified_answer", "guided_exercise"}:
-        _store_skill_contract(evidence, private_exercise)
-    return ResponseEnvelope.model_validate(result).model_dump(mode="json", exclude_unset=True)
+        _store_skill_contract(
+            evidence,
+            private_exercise,
+            public_response_digest(validated_result),
+        )
+    return validated_result
 
 def _turns(query: str, history: list[dict[str, str]], answer: str) -> list[dict[str, str]]:
     return [*(history or []), {"role": "student", "content": query}, {"role": "tutor", "content": answer}]

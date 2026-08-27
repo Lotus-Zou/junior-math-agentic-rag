@@ -31,7 +31,8 @@ from agentic_rag.guardrails import input_guardrail_violation
 from agentic_rag.metrics import FEEDBACK, observe_state
 from agentic_rag.response_contract import (
     capture_skill_contract, clarification_response, consume_skill_contract, normalize_response,
-    peek_skill_contract, private_exercise_payload, response_validation_digest,
+    peek_skill_contract, private_exercise_payload, public_response_digest,
+    response_validation_digest,
     restore_validated_exercise_state,
 )
 from agentic_rag.tracing import append_bad_case, persist_trace
@@ -208,8 +209,9 @@ class _CachePrivateExerciseState(BaseModel):
 
     template_id: str
     topic: str
+    public_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
     hidden_answer: str
-    validation_digest: str
+    validation_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def validate_digest(self) -> "_CachePrivateExerciseState":
@@ -223,6 +225,9 @@ class _CacheContract(BaseModel):
 
     validation_evidence: _CacheValidationEvidence
     private_exercise_state: _CachePrivateExerciseState | None = None
+    public_response_sha256: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
 
 
 class _CacheConversationTurn(BaseModel):
@@ -249,6 +254,7 @@ class _CacheExerciseState(BaseModel):
     difficulty: int | None = None
     exercise_type: str | None = None
     template_id: str | None = None
+    fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class _CacheClarification(BaseModel):
@@ -303,9 +309,28 @@ class _CacheRecord(BaseModel):
     @model_validator(mode="after")
     def validate_response_type_matches_hidden_state(self) -> "_CacheRecord":
         expects_private_exercise = self.public.response_type == "guided_exercise"
-        has_private_exercise = self.contract.private_exercise_state is not None
+        private_exercise = self.contract.private_exercise_state
+        has_private_exercise = private_exercise is not None
         if has_private_exercise is not expects_private_exercise:
             raise ValueError("cached response type and hidden-answer state disagree")
+        public_payload = self.public.model_dump(mode="json", exclude_unset=True)
+        expected_digest = public_response_digest(public_payload)
+        if self.contract.public_response_sha256 is None or not secrets.compare_digest(
+            self.contract.public_response_sha256, expected_digest
+        ):
+            raise ValueError("cached public response digest does not match")
+        if expects_private_exercise:
+            public_exercise = self.public.exercise_state
+            if (
+                public_exercise is None
+                or not public_exercise.template_id
+                or not public_exercise.topic
+                or not public_exercise.fingerprint
+                or public_exercise.template_id != private_exercise.template_id
+                or public_exercise.topic != private_exercise.topic
+                or public_exercise.fingerprint != private_exercise.public_fingerprint
+            ):
+                raise ValueError("cached public and private exercise state disagree")
         return self
 
 
@@ -367,6 +392,35 @@ def _clarification_for(request: AskRequest, trace_id: str | None = None) -> dict
     return response
 
 
+def _require_public_digest_match(
+    response: dict[str, Any], trusted_contract: dict[str, Any]
+) -> dict[str, Any]:
+    trusted_digest = trusted_contract.get("public_response_sha256")
+    if trusted_digest is not None and not secrets.compare_digest(
+        trusted_digest, public_response_digest(response)
+    ):
+        raise ContractViolation("response contract does not match public response")
+    return response
+
+
+def _bind_contract_to_public_response(
+    contract: dict[str, Any], public_response: dict[str, Any]
+) -> dict[str, Any]:
+    """Bind trusted evidence after the API adds server-owned public metrics."""
+    trusted_contract = _validated_contract(contract)
+    if trusted_contract.get("validation_evidence") is None:
+        raise ContractViolation("response contract is missing validation evidence")
+    rebound = _validated_contract(
+        {
+            **trusted_contract,
+            "public_response_sha256": public_response_digest(public_response),
+        }
+    )
+    if not rebound:
+        raise ContractViolation("response contract could not bind public response")
+    return rebound
+
+
 def _public_response(
     payload: dict[str, Any], request: AskRequest, *, contract: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -396,10 +450,13 @@ def _public_response(
             raise ContractViolation("verified response is missing required evidence")
         normalized_payload["validation_evidence"] = evidence
         try:
-            return normalize_response(
-                normalized_payload,
-                response_type,
-                private_exercise=private_exercise,
+            return _require_public_digest_match(
+                normalize_response(
+                    normalized_payload,
+                    response_type,
+                    private_exercise=private_exercise,
+                ),
+                trusted_contract,
             )
         except ValueError as exc:
             raise ContractViolation("response contract rejected producer payload") from exc
@@ -412,14 +469,20 @@ def _public_response(
         if evidence is None:
             raise ContractViolation("guided response is missing validation evidence")
         normalized_payload["validation_evidence"] = evidence
-        return normalize_response(
-            normalized_payload,
-            "guided_exercise",
-            private_exercise=private_exercise,
+        return _require_public_digest_match(
+            normalize_response(
+                normalized_payload,
+                "guided_exercise",
+                private_exercise=private_exercise,
+            ),
+            trusted_contract,
         )
     if evidence is not None:
         normalized_payload["validation_evidence"] = evidence
-        return normalize_response(normalized_payload, "verified_answer")
+        return _require_public_digest_match(
+            normalize_response(normalized_payload, "verified_answer"),
+            trusted_contract,
+        )
     if normalized_payload.get("clarification") or normalized_payload.get("needs_clarification"):
         return _clarification_for(request, normalized_payload.get("trace_id"))
     if normalized_payload.get("refusal_reason"):
@@ -441,7 +504,16 @@ def _cache_record(public_response: dict[str, Any], contract: dict[str, Any]) -> 
         raise ContractViolation("cache record is missing hidden-answer signal")
     if response_type == "verified_answer" and private_exercise is not None:
         raise ContractViolation("verified cache record cannot carry exercise state")
-    contract_payload: dict[str, Any] = {"validation_evidence": evidence}
+    trusted_digest = trusted_contract.get("public_response_sha256")
+    expected_digest = public_response_digest(public_response)
+    if trusted_digest is None or not secrets.compare_digest(
+        trusted_digest, expected_digest
+    ):
+        raise ContractViolation("cache record does not match trusted public response")
+    contract_payload: dict[str, Any] = {
+        "validation_evidence": evidence,
+        "public_response_sha256": trusted_digest,
+    }
     if private_exercise is not None:
         contract_payload["private_exercise_state"] = private_exercise_payload(
             private_exercise
@@ -525,7 +597,12 @@ async def ask(request: AskRequest):
             persist_trace(trace_state)
             observe_state(trace_state, latency)
             if response["response_type"] in {"verified_answer", "guided_exercise"}:
-                answer_cache.set(cache_payload, _cache_record(response, fast_contract))
+                cache_contract = _bind_contract_to_public_response(
+                    fast_contract, response
+                )
+                answer_cache.set(
+                    cache_payload, _cache_record(response, cache_contract)
+                )
             return response
 
         loop = asyncio.get_running_loop()
@@ -565,7 +642,10 @@ async def ask(request: AskRequest):
         response = _public_response(raw_response, request, contract=graph_contract)
         response["metrics"]["latency_ms"] = round(latency * 1000, 2)
         if response["response_type"] in {"verified_answer", "guided_exercise"}:
-            answer_cache.set(cache_payload, _cache_record(response, graph_contract))
+            cache_contract = _bind_contract_to_public_response(
+                graph_contract, response
+            )
+            answer_cache.set(cache_payload, _cache_record(response, cache_contract))
         return response
     except HTTPException:
         raise

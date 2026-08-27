@@ -47,6 +47,8 @@ def _context(name: str = "phase-1-final") -> SkillContext:
 
 def _tamper_hidden_answer(template, bad_answer: str):
     if is_dataclass(template):
+        if isinstance(template, fast_path.GeometryExerciseTemplate):
+            return replace(template, parameters=(("vertex_angle", 181),))
         return replace(template, hidden_answer=bad_answer)
     values = list(template)
     if len(values) == 2:
@@ -330,6 +332,7 @@ def test_cache_rejects_nested_public_mutations(client, monkeypatch, mutation):
         request,
         contract=contract,
     )
+    contract = api._bind_contract_to_public_response(contract, public)
     record = api._cache_record(public, contract)
     mutation(record)
     monkeypatch.setattr(api.answer_cache, "get", lambda _payload: record)

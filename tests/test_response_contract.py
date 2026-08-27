@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from agentic_rag.response_contract import (
     clarification_response,
+    exercise_public_fingerprint,
     normalize_response,
     supported_refusal_response,
     validated_exercise_state,
@@ -115,14 +116,22 @@ def test_guided_exercise_requires_private_hidden_answer_signal():
 
 
 def test_guided_exercise_accepts_private_hidden_answer_signal_without_leaking_it():
+    fingerprint = exercise_public_fingerprint(
+        "equation-3x", "algebra", "Solve 3x = 6", "Divide both sides by 3."
+    )
     private_state = validated_exercise_state(
-        "equation-3x", "algebra", "x = 2", "x = 2"
+        "equation-3x", "algebra", "x = 2", "x = 2", fingerprint
     )
     result = normalize_response(
         {
             "answer": "Solve 3x = 6",
             "validation_passed": True,
             "validation_evidence": {"kind": "deterministic", "passed": True},
+            "exercise_state": {
+                "topic": "algebra",
+                "template_id": "equation-3x",
+                "fingerprint": fingerprint,
+            },
         },
         "guided_exercise",
         private_exercise=private_state,
