@@ -1,14 +1,43 @@
 cases:
-  - id: expired-deadline
-    injection: context.deadline_at=past
-    expected_status: FATAL_ERROR
-  - id: malformed-mcp-payload
-    injection: extra-field
-    expected_status: FATAL_ERROR
-  - id: dense-index-unavailable
-    injection: retrieval-provider-error
-    expected_status: FATAL_ERROR
-    fallback: bm25-or-graph
-  - id: critic-rejects
-    injection: wrong-equation-answer
-    expected_branch: response_render
+  - id: model-timeout
+    failure_kind: timeout
+    injection: provider-timeout-private-detail
+    query: "证明这两个三角形全等"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "已知条件"
+  - id: provider-exception
+    failure_kind: runtime_error
+    injection: provider-secret-stack-detail
+    query: "证明这两个三角形全等"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "待证结论"
+  - id: empty-retrieval
+    failure_kind: retrieval_empty
+    injection: dense-bm25-graph-empty
+    query: "证明这两个三角形全等"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "最后一步"
+  - id: critic-rejection
+    failure_kind: critic_rejected
+    injection: rejected-draft-private-marker
+    query: "证明这两个三角形全等"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "准确的待证结论"
+  - id: expired-exercise
+    failure_kind: expired_exercise
+    injection: expired-private-exercise-id
+    query: "再来一道"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "代数、几何或一次函数"
+  - id: cache-exception
+    failure_kind: cache_error
+    injection: redis-connection-private-detail
+    query: "一次函数的斜率怎么判断"
+    language: zh
+    expected_response_type: clarification_required
+    answer_contains: "完整题目"
