@@ -127,9 +127,25 @@ function assertNoInternalCopy(text, state) {
   if (harderResponseBody.exercise_state?.difficulty <= firstGeometryBody.exercise_state.difficulty) {
     throw new Error("Harder command did not increase the exercise difficulty");
   }
-  const harderMessage = page.locator(".message.assistant").last();
+  const harderMessageIndex = (await page.locator(".message.assistant").count()) - 1;
+  const harderMessage = page.locator(".message.assistant").nth(harderMessageIndex);
   await harderMessage.locator(".assistant-answer").getByText("几何练习", { exact: false }).waitFor();
   assertNoInternalCopy(await page.locator("body").innerText(), "Adaptive harder exercise");
+
+  await page.locator("#questionInput").fill("我不会所以要你给出答案");
+  const revealResponse = page.waitForResponse((response) => response.url().endsWith("/ask") && response.request().method() === "POST");
+  await page.locator("#askForm").evaluate((form) => form.requestSubmit());
+  const revealBody = await (await revealResponse).json();
+  if (revealBody.response_type !== "verified_answer" || revealBody.intent !== "adaptive_solution_reveal") {
+    throw new Error("Explicit solution request did not enter the verified reveal branch");
+  }
+  const revealMessage = page.locator(".message.assistant").last();
+  const revealText = await revealMessage.locator(".assistant-answer").innerText();
+  if (!revealText.includes("完整解答") || revealText.includes("答案继续隐藏")) {
+    throw new Error("Explicit solution request remained trapped in the hint loop");
+  }
+  await revealMessage.locator(".meta-chip").filter({ hasText: /^解题步骤已检查$/ }).waitFor();
+  assertNoInternalCopy(await page.locator("body").innerText(), "Explicit verified solution reveal");
 
   await page.locator('[data-language="en"]').click();
   await harderMessage.locator(".meta-chip").filter({ hasText: /^Practice$/ }).waitFor();

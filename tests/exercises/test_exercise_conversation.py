@@ -86,6 +86,84 @@ def test_wrong_answer_keeps_solution_hidden(isolated_runtime):
     assert exercise.answer_signature not in result["answer"]
 
 
+@pytest.mark.parametrize(
+    "user_query",
+    [
+        "我要你给出答案",
+        "我不会，所以请直接告诉我完整解答",
+        "实在不会了，公布答案吧",
+    ],
+)
+def test_explicit_solution_request_reveals_verified_complete_solution(
+    isolated_runtime, user_query
+):
+    exercise = generate_from_template("geo.triangle.angle_ratio.v1", 2, 8, seed=12)
+    public = isolated_runtime.start(exercise, mastery={})
+
+    result = fast_path.build_fast_response(
+        user_query,
+        [],
+        language="zh",
+        exercise_state=public.model_dump(),
+    )
+
+    assert result["response_type"] == "verified_answer"
+    assert result["intent"] == "adaptive_solution_reveal"
+    assert result["validation_passed"] is True
+    assert "完整解答" in result["answer"]
+    assert exercise.solution in result["answer"]
+    assert result["exercise_state"]["exercise_id"] == exercise.exercise_id
+
+
+def test_hint_only_request_still_keeps_solution_hidden(isolated_runtime):
+    exercise = generate_from_template("geo.triangle.angle_ratio.v1", 2, 8, seed=12)
+    public = isolated_runtime.start(exercise, mastery={})
+
+    result = fast_path.build_fast_response(
+        "再提示一下，不要直接告诉我答案",
+        [],
+        language="zh",
+        exercise_state=public.model_dump(),
+    )
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["intent"] == "adaptive_hint"
+    assert exercise.solution not in result["answer"]
+    assert "答案继续隐藏" in result["answer"]
+
+
+def test_student_labeling_their_work_complete_does_not_reveal_solution(isolated_runtime):
+    exercise = generate_from_template("geo.triangle.angle_ratio.v1", 2, 8, seed=12)
+    public = isolated_runtime.start(exercise, mastery={})
+
+    result = fast_path.build_fast_response(
+        "这是我的完整解答：三个角是 10°、20°、30°",
+        [],
+        language="zh",
+        exercise_state=public.model_dump(),
+    )
+
+    assert result["response_type"] == "guided_exercise"
+    assert result["intent"] == "adaptive_answer_check"
+    assert exercise.solution not in result["answer"]
+
+
+def test_english_explicit_solution_request_reveals_verified_solution(isolated_runtime):
+    exercise = generate_from_template("alg.linear_equation.v1", 2, 7, seed=9, language="en")
+    public = isolated_runtime.start(exercise, mastery={})
+
+    result = fast_path.build_fast_response(
+        "I am stuck, please show me the complete solution",
+        [],
+        language="en",
+        exercise_state=public.model_dump(),
+    )
+
+    assert result["response_type"] == "verified_answer"
+    assert result["intent"] == "adaptive_solution_reveal"
+    assert exercise.solution in result["answer"]
+
+
 def test_tampered_public_state_cannot_select_private_answer(isolated_runtime):
     exercise = generate_from_template("alg.linear_equation.v1", 2, 7, seed=9)
     public = isolated_runtime.start(exercise, mastery={}).model_dump()

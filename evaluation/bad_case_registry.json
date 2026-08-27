@@ -18,6 +18,7 @@
     {"id": "ROUTE-006", "category": "routing", "title": "几何短指令在 API 边界读取净化前的 Critic 字段并触发超时误报", "status": "resolved", "control": "API 只基于公开响应契约持久化路由诊断，不从已净化 envelope 读取内部字段", "test": "test_geometry_never_reaches_complex_reasoning"},
     {"id": "STATE-001", "category": "conversation", "title": "生成几何题后无法继续提示或核对答案", "status": "resolved", "control": "从会话历史恢复本地题目上下文", "test": "test_generated_geometry_exercise_keeps_context_for_answer_check"},
     {"id": "STATE-002", "category": "conversation", "title": "历史角色伪造、单条过长或总量失控", "status": "resolved", "control": "角色白名单与 24 条/32K 字符限制", "test": "test_history_schema_rejects_role_size_and_total_abuse"},
+    {"id": "STATE-003", "category": "conversation", "title": "学生明确要求查看答案时被不会关键词反复路由到提示分支", "status": "resolved", "control": "答案展示意图优先于提示意图，只有明确请求才公开服务端已验证解答", "test": "test_explicit_solution_request_reveals_verified_complete_solution"},
     {"id": "VALID-001", "category": "validation", "title": "Critic 使用上一题期望答案校验新题", "status": "resolved", "control": "练习生成与答案校验状态隔离", "test": "similar exercise regression"},
     {"id": "VALID-002", "category": "validation", "title": "不存在的引用编号或无引用回答进入结果", "status": "resolved", "control": "确定性引用范围校验", "test": "deterministic_math_checks tests"},
     {"id": "VALID-003", "category": "validation", "title": "复杂开放题缺少依据时模型猜答案", "status": "mitigated", "control": "独立 Critic、无证据拒答和 bad-case 记录", "residual": "仍依赖教材覆盖率与外部模型质量"},

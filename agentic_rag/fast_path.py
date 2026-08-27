@@ -701,6 +701,51 @@ def _looks_like_new_problem(query: str) -> bool:
     )
 
 
+def _asks_for_solution_reveal(query: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", query or "").strip().lower()
+    keep_hidden = (
+        "不要告诉我答案",
+        "别告诉我答案",
+        "不要给答案",
+        "先不看答案",
+        "答案继续隐藏",
+        "don't tell me the answer",
+        "do not tell me the answer",
+        "without revealing the answer",
+        "keep the answer hidden",
+    )
+    if any(marker in normalized for marker in keep_hidden) or re.search(
+        r"(?:不要|别).{0,8}(?:告诉|给|公布|显示).{0,6}(?:答案|解答)|"
+        r"\b(?:don't|do\s+not)\b.{0,24}\b(?:tell|show|give|reveal)\b.{0,16}\b(?:answer|solution)\b",
+        normalized,
+    ):
+        return False
+    chinese_markers = (
+        "给出答案",
+        "给我答案",
+        "告诉我答案",
+        "告诉我完整解答",
+        "直接告诉我",
+        "公布答案",
+        "查看答案",
+        "给我完整解答",
+        "给出完整解答",
+        "查看完整解答",
+        "我要完整解答",
+        "请详细解答",
+        "我放弃",
+    )
+    if any(marker in normalized for marker in chinese_markers):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:show|give|tell|reveal)\b.{0,24}\b(?:answer|solution)\b|"
+            r"\bcomplete\s+solution\b|\bi\s+give\s+up\b",
+            normalized,
+        )
+    )
+
+
 def _adaptive_answer_response(
     query: str,
     history: list[dict[str, Any]],
@@ -715,7 +760,8 @@ def _adaptive_answer_response(
         return _adaptive_state_clarification(query, history, summary, language)
     public, session, exercise = resolved
     normalized = unicodedata.normalize("NFKC", query or "").strip().lower()
-    asks_for_hint = any(
+    asks_for_solution = _asks_for_solution_reveal(query)
+    asks_for_hint = not asks_for_solution and any(
         marker in normalized
         for marker in ("提示", "不会", "没思路", "hint", "stuck")
     )
@@ -727,7 +773,14 @@ def _adaptive_answer_response(
     if not asks_for_hint and not checked.passed and _looks_like_new_problem(query):
         return None
 
-    if asks_for_hint:
+    if asks_for_solution:
+        answer = (
+            f"**Complete solution**\n{exercise.solution}\n\nCompare each step with your attempt, then try a new exercise of the same type."
+            if language == "en"
+            else f"**完整解答**\n{exercise.solution}\n\n请逐步对照你刚才的思路，再尝试一道同类型题巩固。"
+        )
+        outcome = "incorrect"
+    elif asks_for_hint:
         answer = (
             f"**Another hint**\n{exercise.hint}\nWrite the key relation first; the answer remains hidden."
             if language == "en"
@@ -756,7 +809,13 @@ def _adaptive_answer_response(
     response = _base_response(query, answer, history, summary)
     response.update(
         {
-            "intent": "adaptive_answer_check" if not asks_for_hint else "adaptive_hint",
+            "intent": (
+                "adaptive_solution_reveal"
+                if asks_for_solution
+                else "adaptive_hint"
+                if asks_for_hint
+                else "adaptive_answer_check"
+            ),
             "knowledge_points": exercise.knowledge_points,
             "sources": [
                 {
@@ -770,7 +829,7 @@ def _adaptive_answer_response(
             "metrics": {"tool_calls": 0},
         }
     )
-    if checked.passed and not asks_for_hint:
+    if asks_for_solution or (checked.passed and not asks_for_hint):
         return normalize_response(response, "verified_answer")
     private_state = _adaptive_private_state(exercise)
     if private_state is None:
@@ -1629,10 +1688,13 @@ def _geometry_answer_response(query: str, history: list[dict[str, str]], summary
         return None
     template, rendered, private_state = exercise
     normalized = (query or "").strip().lower()
-    asks_for_hint = any(marker in normalized for marker in ("提示", "不会", "没思路", "hint", "stuck"))
+    asks_for_solution = _asks_for_solution_reveal(query)
+    asks_for_hint = not asks_for_solution and any(marker in normalized for marker in ("提示", "不会", "没思路", "hint", "stuck"))
     passed = _geometry_answer_is_correct(template, query, language)
     if language == "en":
         answer = (
+            f"**Complete solution**\n{rendered.hidden_answer}\n\nCompare each step with your attempt, then try a similar exercise."
+            if asks_for_solution else
             f"**Another hint**\n{rendered.hint}\nTry writing the key equality or theorem first; the answer remains hidden."
             if asks_for_hint else
             (f"**Check passed**\nYour conclusion is correct.\n\n**Reasoning**\n{rendered.hidden_answer}" if passed else
@@ -1640,6 +1702,8 @@ def _geometry_answer_response(query: str, history: list[dict[str, str]], summary
         )
     else:
         answer = (
+            f"**完整解答**\n{rendered.hidden_answer}\n\n请逐步对照你刚才的思路，再尝试一道同类型题巩固。"
+            if asks_for_solution else
             f"**再给一个提示**\n{rendered.hint}\n先把关键等式或判定依据写出来，答案继续隐藏。"
             if asks_for_hint else
             (f"**检查通过**\n你的结论正确。\n\n**完整推导**\n{rendered.hidden_answer}" if passed else
@@ -1648,7 +1712,13 @@ def _geometry_answer_response(query: str, history: list[dict[str, str]], summary
     response = _base_response(query, answer, history, summary)
     response["sources"] = [{**CORE_SOURCE, "chapter": "几何"}]
     response.update({
-        "intent": "geometry_answer_check" if not asks_for_hint else "geometry_hint",
+        "intent": (
+            "geometry_solution_reveal"
+            if asks_for_solution
+            else "geometry_hint"
+            if asks_for_hint
+            else "geometry_answer_check"
+        ),
         "knowledge_points": list(rendered.knowledge_points),
         "validation_passed": True,
         "validation_evidence": {"kind": "deterministic", "passed": True},
@@ -1660,7 +1730,7 @@ def _geometry_answer_response(query: str, history: list[dict[str, str]], summary
         },
         "metrics": {"tool_calls": 0},
     })
-    if passed and not asks_for_hint:
+    if asks_for_solution or (passed and not asks_for_hint):
         return normalize_response(response, "verified_answer")
     return normalize_response(
         response, "guided_exercise", private_exercise=private_state
