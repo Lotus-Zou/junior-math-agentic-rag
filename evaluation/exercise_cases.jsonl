@@ -1,0 +1,12 @@
+{"id":"geo-g7-d1","topic":"geometry","grade":7,"difficulty":1,"exercise_type":"calculation"}
+{"id":"geo-g8-d2","topic":"geometry","grade":8,"difficulty":2,"exercise_type":"calculation"}
+{"id":"geo-g8-d3","topic":"geometry","grade":8,"difficulty":3,"exercise_type":"mixed"}
+{"id":"geo-g8-d4","topic":"geometry","grade":8,"difficulty":4,"exercise_type":"proof"}
+{"id":"alg-g7-d1","topic":"algebra","grade":7,"difficulty":1,"exercise_type":"calculation"}
+{"id":"alg-g7-d2","topic":"algebra","grade":7,"difficulty":2,"exercise_type":"calculation"}
+{"id":"alg-g7-d3","topic":"algebra","grade":7,"difficulty":3,"exercise_type":"calculation"}
+{"id":"alg-g8-d2","topic":"algebra","grade":8,"difficulty":2,"exercise_type":"calculation"}
+{"id":"alg-g8-d3","topic":"algebra","grade":8,"difficulty":3,"exercise_type":"calculation"}
+{"id":"fn-g8-d1","topic":"linear_function","grade":8,"difficulty":1,"exercise_type":"calculation"}
+{"id":"fn-g8-d2","topic":"linear_function","grade":8,"difficulty":2,"exercise_type":"mixed"}
+{"id":"fn-g9-d4","topic":"linear_function","grade":9,"difficulty":4,"exercise_type":"application"}

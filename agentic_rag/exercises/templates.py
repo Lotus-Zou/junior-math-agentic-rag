@@ -61,38 +61,50 @@ def _sample_isosceles(rng: random.Random, difficulty: int) -> dict[str, Any]:
     vertex = rng.choice(list(choices))
     if (180 - vertex) % 2:
         vertex += 1
-    return {"vertex_angle": vertex, "base_angle": (180 - vertex) // 2}
+    labels = rng.sample("ABCDEFGHJKLMNPQRSTUVWXYZ", 3)
+    return {
+        "triangle": "".join(labels),
+        "vertex_label": labels[0],
+        "base_labels": labels[1:],
+        "equal_sides": [labels[0] + labels[1], labels[0] + labels[2]],
+        "vertex_angle": vertex,
+        "base_angle": (180 - vertex) // 2,
+    }
 
 
 def _render_isosceles(p: dict[str, Any], language: str) -> RenderedExercise:
     vertex, base = p["vertex_angle"], p["base_angle"]
+    triangle = p["triangle"]
+    vertex_label = p["vertex_label"]
+    first_base, second_base = p["base_labels"]
+    first_side, second_side = p["equal_sides"]
+    signature = f"{first_base}={base};{second_base}={base}"
     if language == "en":
         return RenderedExercise(
-            f"In isosceles triangle ABC, AB = AC and angle A = {vertex}°. Find angles B and C.",
+            f"In isosceles triangle {triangle}, {first_side} = {second_side} and angle {vertex_label} = {vertex}°. Find angles {first_base} and {second_base}.",
             "Use the equal base angles and the 180° angle sum of a triangle.",
-            f"B = C = (180° - {vertex}°) / 2 = {base}°.",
-            f"B={base};C={base}",
+            f"{first_base} = {second_base} = (180° - {vertex}°) / 2 = {base}°.",
+            signature,
         )
     return RenderedExercise(
-        f"在等腰三角形 ABC 中，AB = AC，顶角 ∠A = {vertex}°，求 ∠B 和 ∠C。",
+        f"在等腰三角形 {triangle} 中，{first_side} = {second_side}，顶角 ∠{vertex_label} = {vertex}°，求 ∠{first_base} 和 ∠{second_base}。",
         "利用等腰三角形两底角相等和三角形内角和为 180°。",
-        f"∠B = ∠C = (180° - {vertex}°) ÷ 2 = {base}°。",
-        f"B={base};C={base}",
+        f"∠{first_base} = ∠{second_base} = (180° - {vertex}°) ÷ 2 = {base}°。",
+        signature,
     )
 
 
-_RATIOS = {
-    2: ((1, 2, 3), (2, 3, 4), (3, 4, 5)),
-    3: ((2, 3, 5), (3, 4, 8), (4, 5, 9), (5, 6, 7)),
-}
-
-
 def _sample_angle_ratio(rng: random.Random, difficulty: int) -> dict[str, Any]:
-    valid = []
-    for ratio in _RATIOS[difficulty]:
-        if 180 % sum(ratio) == 0:
-            valid.append(ratio)
-    ratio = rng.choice(valid)
+    totals = (9, 10, 12, 15, 18, 20) if difficulty == 2 else (12, 15, 18, 20, 30, 36)
+    total = rng.choice(totals)
+    while True:
+        first = rng.randint(1, total - 2)
+        second = rng.randint(1, total - first - 1)
+        third = total - first - second
+        common = math.gcd(first, math.gcd(second, third))
+        ratio = (first // common, second // common, third // common)
+        if sum(ratio) in {9, 10, 12, 15, 18, 20, 30, 36}:
+            break
     unit = 180 // sum(ratio)
     angles = [unit * value for value in ratio]
     classification = (
@@ -124,17 +136,12 @@ def _render_angle_ratio(p: dict[str, Any], language: str) -> RenderedExercise:
     )
 
 
-_SAS_VARIANTS = (
-    ("ABC", "DEF", ["AB", "AC"], ["DE", "DF"], "A", "D"),
-    ("PQR", "XYZ", ["PQ", "PR"], ["XY", "XZ"], "P", "X"),
-    ("MNO", "RST", ["MN", "MO"], ["RS", "RT"], "M", "R"),
-)
-
-
 def _sample_sas(rng: random.Random, _difficulty: int) -> dict[str, Any]:
-    first, second, first_sides, second_sides, first_vertex, second_vertex = rng.choice(
-        _SAS_VARIANTS
-    )
+    labels = rng.sample("ABCDEFGHJKLMNPQRSTUVWXYZ", 6)
+    first, second = "".join(labels[:3]), "".join(labels[3:])
+    first_vertex, second_vertex = labels[0], labels[3]
+    first_sides = [labels[0] + labels[1], labels[0] + labels[2]]
+    second_sides = [labels[3] + labels[4], labels[3] + labels[5]]
     return {
         "first_triangle": first,
         "second_triangle": second,
@@ -202,8 +209,8 @@ def _render_linear_equation(p: dict[str, Any], language: str) -> RenderedExercis
 
 
 def _sample_difference(rng: random.Random, difficulty: int) -> dict[str, Any]:
-    m = rng.randint(1 if difficulty == 2 else 2, 8)
-    n = rng.randint(1, 15 if difficulty == 3 else 9)
+    m = rng.randint(1 if difficulty == 2 else 2, 30)
+    n = rng.randint(1, 60 if difficulty == 3 else 45)
     return {"m": m, "n": n, "left_square": m * m, "right_square": n * n}
 
 
@@ -227,11 +234,11 @@ def _render_difference(p: dict[str, Any], language: str) -> RenderedExercise:
 
 
 def _sample_slope_intercept(rng: random.Random, difficulty: int) -> dict[str, Any]:
-    slopes = [value for value in range(-6, 7) if value != 0]
+    slopes = [value for value in range(-12, 13) if value != 0]
     if difficulty == 1:
-        slopes = [1, 2, 3, 4]
+        slopes = list(range(1, 21))
     k = rng.choice(slopes)
-    b = rng.randint(-8, 8)
+    b = rng.randint(-50 if difficulty == 1 else -40, 50 if difficulty == 1 else 40)
     return {"k": k, "b": b, "y0": b, "y1": k + b}
 
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-08-26",
+  "updated_at": "2026-08-27",
   "product_sla": {
     "deterministic_p95_ms": 100,
     "agent_timeout_seconds": 8,
@@ -30,6 +30,9 @@
     {"id": "OBS-001", "category": "observability", "title": "本地快速回答没有 Trace 和指标", "status": "resolved", "control": "deterministic_router Trace 与统一 Prometheus 观测", "test": "API trace integration"},
     {"id": "OBS-002", "category": "observability", "title": "用户负反馈未进入 bad-case 池", "status": "resolved", "control": "negative_feedback 自动追加分类记录", "test": "feedback integration"},
     {"id": "EVAL-001", "category": "evaluation", "title": "独立门禁脚本直接执行时无法导入项目包", "status": "resolved", "control": "脚本按自身位置注入项目根目录", "test": "python evaluation/bad_case_harness.py --report"},
+    {"id": "EXERCISE-001", "category": "generation", "title": "同一主题反复生成固定题，难度变化后题面仍重复", "status": "resolved", "control": "参数化题族、最近题面与答案签名去重、每配置 100 种子唯一率门禁", "test": "python evaluation/exercise_quality_harness.py --report"},
+    {"id": "EXERCISE-002", "category": "security", "title": "隐藏解答、答案签名或生成参数可能进入浏览器状态", "status": "resolved", "control": "服务端 TTL 私有存储与严格公开 exercise_state，质量门禁扫描私有字段", "test": "test_public_state_never_serializes_hidden_solution"},
+    {"id": "EXERCISE-003", "category": "conversation", "title": "客户端篡改题目指纹后可能选择不匹配的私有答案", "status": "resolved", "control": "exercise_id、session_id 与题目元数据逐字段绑定，篡改状态 fail closed", "test": "test_tampered_public_state_cannot_select_private_answer"},
     {"id": "OPS-001", "category": "reliability", "title": "阻塞模型线程无限增长导致服务耗尽", "status": "mitigated", "control": "4 线程有界执行器与 8 秒请求熔断", "residual": "Python 线程不能强杀已进入 SDK 的阻塞调用"},
     {"id": "DATA-001", "category": "evaluation", "title": "1000 条数据由十类模板扩展，分布不够真实", "status": "open", "control": "保留分层基准并新增真实 bad-case 注册表", "residual": "需持续引入脱敏真实学生错题和图形题"},
     {"id": "GEO-001", "category": "multimodal", "title": "图片题、手写公式和复杂几何图尚不能可靠解析", "status": "open", "control": "文本题明确追问缺失条件", "residual": "需要 OCR、公式识别、图元关系抽取和专项标注集"},

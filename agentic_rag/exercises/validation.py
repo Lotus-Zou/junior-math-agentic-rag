@@ -61,17 +61,31 @@ def _validate_isosceles(item: GeneratedExercise) -> list[str]:
     p = item.parameters
     vertex = p["vertex_angle"]
     base = p["base_angle"]
+    triangle = p["triangle"]
+    vertex_label = p["vertex_label"]
+    base_labels = p["base_labels"]
+    equal_sides = p["equal_sides"]
     issues = []
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in (vertex, base)):
         return ["isosceles parameters must be integers"]
     if not 0 < vertex < 180 or not 0 < base < 180 or vertex + 2 * base != 180:
         issues.append("isosceles parameters do not form the stated triangle")
-    if item.answer_signature != f"B={base};C={base}":
+    if (
+        not isinstance(triangle, str)
+        or len(triangle) != 3
+        or len(set(triangle)) != 3
+        or vertex_label != triangle[0]
+        or base_labels != [triangle[1], triangle[2]]
+        or equal_sides != [triangle[0] + triangle[1], triangle[0] + triangle[2]]
+    ):
+        issues.append("isosceles labels do not describe the stated equal sides")
+    expected_signature = f"{base_labels[0]}={base};{base_labels[1]}={base}"
+    if item.answer_signature != expected_signature:
         issues.append("answer_signature does not match the base angles")
-    if not all(token in item.solution for token in ("B", "C", str(base))):
+    if not all(token in item.solution for token in (*base_labels, str(base))):
         issues.append("solution does not state the verified base angles")
-    if str(vertex) not in item.problem:
-        issues.append("problem does not contain the generated vertex angle")
+    if not all(token in item.problem for token in (triangle, *equal_sides, str(vertex))):
+        issues.append("problem does not contain every generated isosceles condition")
     return issues
 
 

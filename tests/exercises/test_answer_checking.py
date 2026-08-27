@@ -21,7 +21,8 @@ CASES = (
 def _correct_answer(item) -> str:
     p = item.parameters
     if item.template_id == "geo.isosceles.base_angles.v1":
-        return f"∠B = {p['base_angle']}°，∠C = {p['base_angle']}°"
+        first_base, second_base = p["base_labels"]
+        return f"∠{first_base} = {p['base_angle']}°，∠{second_base} = {p['base_angle']}°"
     if item.template_id == "geo.triangle.angle_ratio.v1":
         label = {"acute": "锐角", "right": "直角", "obtuse": "钝角"}[
             p["classification"]

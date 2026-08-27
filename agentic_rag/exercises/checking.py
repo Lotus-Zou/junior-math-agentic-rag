@@ -44,8 +44,9 @@ def _all_assignments_equal(answer: str, symbol: str, expected: Fraction) -> bool
 
 def _check_isosceles(item: GeneratedExercise, answer: str) -> bool:
     base = Fraction(item.parameters["base_angle"])
-    return _all_assignments_equal(answer, "b", base) and _all_assignments_equal(
-        answer, "c", base
+    first_base, second_base = item.parameters["base_labels"]
+    return _all_assignments_equal(answer, first_base, base) and _all_assignments_equal(
+        answer, second_base, base
     )
 
 
