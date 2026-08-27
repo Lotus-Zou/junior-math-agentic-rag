@@ -685,7 +685,14 @@ def feedback(request: FeedbackRequest):
 def metrics(authorization: str | None = Header(default=None)):
     token = OPERATIONS_METRICS_TOKEN
     supplied = authorization or ""
-    expected = f"Bearer {token}" if token else ""
-    if not token or not secrets.compare_digest(supplied, expected):
+    try:
+        wire_bytes = supplied.encode("latin-1")
+        supplied_bytes = wire_bytes.decode("utf-8").encode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        supplied_bytes = supplied.encode("utf-8", errors="surrogatepass")
+    expected_bytes = (
+        b"Bearer " + token.encode("utf-8", errors="surrogatepass") if token else b""
+    )
+    if not token or not secrets.compare_digest(supplied_bytes, expected_bytes):
         raise HTTPException(status_code=404, detail="Not Found")
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

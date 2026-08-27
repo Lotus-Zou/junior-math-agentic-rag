@@ -4,7 +4,10 @@ const path = require("path");
 const baseUrl = process.env.SMOKE_BASE_URL || "http://127.0.0.1:8000";
 
 function assertNoInternalCopy(text, state) {
-  for (const forbidden of ["critic", "模型", "检索", "超时", "model error", "retriev", "timeout"]) {
+  for (const forbidden of [
+    "critic", "模型", "检索", "超时", "model error", "retriev", "timeout",
+    "本地生成练习", "本地确定性校验", "locally generated exercise", "local deterministic check",
+  ]) {
     if (text.toLowerCase().includes(forbidden.toLowerCase())) {
       throw new Error(`${state} exposed internal copy: ${forbidden}`);
     }
@@ -79,7 +82,8 @@ function assertNoInternalCopy(text, state) {
 
   await page.locator("#questionInput").fill("几何");
   await page.locator("#askForm").evaluate((form) => form.requestSubmit());
-  const geometryAnswer = page.locator(".message.assistant .assistant-answer").last();
+  const geometryMessage = page.locator(".message.assistant").last();
+  const geometryAnswer = geometryMessage.locator(".assistant-answer");
   await geometryAnswer.waitFor({ timeout: 8000 });
   await geometryAnswer.getByText("几何练习", { exact: false }).waitFor();
   const geometryText = await geometryAnswer.innerText();
@@ -89,7 +93,15 @@ function assertNoInternalCopy(text, state) {
   if (geometryText.includes("复杂推理服务") || geometryText.includes("超时") || geometryText.includes("Critic")) {
     throw new Error("Geometry exercise exposed internal failure copy");
   }
-  assertNoInternalCopy(await page.locator("body").innerText(), "Rendered conversation");
+  await geometryMessage.locator(".meta-chip").filter({ hasText: /^练习$/ }).waitFor();
+  assertNoInternalCopy(await page.locator("body").innerText(), "Chinese rendered conversation");
+
+  await page.locator('[data-language="en"]').click();
+  await geometryMessage.locator(".meta-chip").filter({ hasText: /^Practice$/ }).waitFor();
+  assertNoInternalCopy(await page.locator("body").innerText(), "English language switch with conversation");
+  await page.locator('[data-language="zh"]').click();
+  await geometryMessage.locator(".meta-chip").filter({ hasText: /^练习$/ }).waitFor();
+  assertNoInternalCopy(await page.locator("body").innerText(), "Chinese language switch with conversation");
 
   if (consoleErrors.length) throw new Error(`Console errors: ${consoleErrors.join(" | ")}`);
   const screenshot = process.env.SMOKE_SCREENSHOT_PATH || path.join(os.tmpdir(), "agentirag-webapp-smoke.png");

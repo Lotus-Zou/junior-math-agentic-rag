@@ -16,7 +16,7 @@ const translations = {
     helpThreeTitle: "继续追问", helpThreeCopy: "收到分析后可直接问“为什么变号”或“下一步怎么想”，无需重复题目。",
     startUsing: "开始使用", wrongPrefix: "我的作答：", tutor: "数问", analyzing: "正在分析这道题",
     parseStep: "读懂题目", retrieveStep: "查看教材", verifyStep: "检查步骤", validated: "解题步骤已检查", notValidated: "还需要补充信息",
-    localValidated: "已通过本地确定性校验", localExercise: "本地生成练习（答案隐藏）", needsMoreInfo: "需要补充信息", scopeLimited: "当前请求暂不支持",
+    practice: "练习", needsMoreInfo: "需要补充信息", scopeLimited: "当前请求暂不支持",
     sources: "查看来源", noSources: "本次回答没有可展示的来源。", sourceUnknown: "教材片段", chapter: "章节", rank: "排序",
     helpful: "回答有帮助", incorrect: "回答有问题", feedbackThanks: "反馈已记录", feedbackFailed: "反馈提交失败",
     emptyQuestion: "请先输入完整题目。", requestFailed: "请补充完整题干、图形条件或需要核对的步骤。", timeout: "请补充完整题干、图形条件或需要核对的步骤。",
@@ -45,7 +45,7 @@ const translations = {
     helpThreeTitle: "Ask follow-ups", helpThreeCopy: "After the analysis, ask why a sign changed or what to try next without repeating the problem.",
     startUsing: "Start", wrongPrefix: "My attempt:", tutor: "MathTrace", analyzing: "Analyzing this problem",
     parseStep: "Read problem", retrieveStep: "Review textbook", verifyStep: "Check steps", validated: "Steps checked", notValidated: "More information needed",
-    localValidated: "Local deterministic check passed", localExercise: "Locally generated exercise (answer hidden)", needsMoreInfo: "More information needed", scopeLimited: "Request not supported",
+    practice: "Practice", needsMoreInfo: "More information needed", scopeLimited: "Request not supported",
     sources: "View sources", noSources: "No displayable sources for this response.", sourceUnknown: "Textbook excerpt", chapter: "Chapter", rank: "Rank",
     helpful: "Helpful answer", incorrect: "Report an issue", feedbackThanks: "Feedback recorded", feedbackFailed: "Could not submit feedback",
     emptyQuestion: "Enter the complete problem first.", requestFailed: "Please add the full problem, diagram conditions, or the step you want checked.", timeout: "Please add the full problem, diagram conditions, or the step you want checked.",
@@ -82,7 +82,7 @@ function t(key) { return translations[state.language][key] ?? key; }
 function responseLabel(responseType) {
   const responseLabels = {
     verified_answer: t("validated"),
-    guided_exercise: t("localExercise"),
+    guided_exercise: t("practice"),
     clarification_required: t("needsMoreInfo"),
     supported_refusal: t("scopeLimited")
   };
@@ -107,6 +107,9 @@ function applyLanguage(language) {
   });
   if (elements.statusDot.classList.contains("online")) elements.serviceStatus.textContent = t("serviceOnline");
   if (elements.statusDot.classList.contains("offline")) elements.serviceStatus.textContent = t("serviceOffline");
+  document.querySelectorAll("[data-response-type]").forEach((node) => {
+    node.textContent = responseLabel(node.dataset.responseType);
+  });
   document.title = language === "zh" ? "数问 · 初中数学错题助手" : "MathTrace · Junior Math Mistake Tutor";
 }
 
@@ -168,6 +171,7 @@ function addMetaChip(container, label, className = "") {
   chip.className = `meta-chip ${className}`.trim();
   chip.textContent = label;
   container.appendChild(chip);
+  return chip;
 }
 
 function readableMath(source) {
@@ -282,7 +286,8 @@ function appendAssistantMessage(result) {
   article.innerHTML = `<div class="avatar" aria-hidden="true">Σ</div><div class="message-content"><div class="assistant-answer"></div><div class="answer-meta"></div><div class="message-actions"></div></div>`;
   renderRichAnswer(article.querySelector(".assistant-answer"), result.answer);
   const meta = article.querySelector(".answer-meta");
-  addMetaChip(meta, responseLabel(result.response_type), result.validation_passed ? "valid" : "invalid");
+  const responseChip = addMetaChip(meta, responseLabel(result.response_type), result.validation_passed ? "valid" : "invalid");
+  responseChip.dataset.responseType = result.response_type;
   (result.knowledge_points || []).slice(0, 4).forEach((point) => addMetaChip(meta, point));
   if (result.sources?.length) addMetaChip(meta, `${result.sources.length} ${t("sourcesCount")}`);
   if (result.metrics?.latency_ms) addMetaChip(meta, `${t("latency")} ${(result.metrics.latency_ms / 1000).toFixed(1)}s`);
@@ -312,6 +317,7 @@ function showSources(result) {
   elements.sourceList.replaceChildren();
   elements.validation.className = `validation-summary${result.validation_passed ? "" : " invalid"}`;
   elements.validation.textContent = responseLabel(result.response_type);
+  elements.validation.dataset.responseType = result.response_type;
   if (!result.sources?.length) {
     const empty = document.createElement("p");
     empty.className = "empty-sources";

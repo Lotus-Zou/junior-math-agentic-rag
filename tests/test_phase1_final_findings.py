@@ -362,7 +362,54 @@ def test_metrics_are_disabled_without_token_and_authorized_with_bearer(client, m
     assert "text/plain" in authorized.headers["content-type"]
 
 
+def test_metrics_unicode_token_is_exact_and_failures_are_indistinguishable(
+    client, monkeypatch
+):
+    token = "监控-métrics-🔒"
+
+    def get_metrics(supplied_token: str | None = None):
+        headers = []
+        if supplied_token is not None:
+            headers.append(
+                (b"authorization", b"Bearer " + supplied_token.encode("utf-8"))
+            )
+        return client.get("/metrics", headers=headers)
+
+    monkeypatch.setattr(api, "OPERATIONS_METRICS_TOKEN", "")
+    disabled = get_metrics(token)
+
+    monkeypatch.setattr(api, "OPERATIONS_METRICS_TOKEN", token)
+    missing = get_metrics()
+    wrong = get_metrics("监控-me\u0301trics-🔒")
+    authorized = get_metrics(token)
+
+    for response in (disabled, missing, wrong):
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not Found"}
+        assert token not in response.text
+    assert authorized.status_code == 200
+    assert "text/plain" in authorized.headers["content-type"]
+
+
 def test_first_paint_copy_contains_only_student_facing_language():
     html = (ROOT / "static" / "index.html").read_text(encoding="utf-8").lower()
     for forbidden in ("critic", "model", "retrieval", "timeout", "检索", "模型", "超时"):
         assert forbidden not in html
+
+
+def test_bilingual_ui_uses_student_facing_practice_copy():
+    javascript = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    public_assets = (
+        (ROOT / "static" / "index.html").read_text(encoding="utf-8") + javascript
+    ).lower()
+
+    assert 'practice: "练习"' in javascript
+    assert 'practice: "Practice"' in javascript
+    assert 'guided_exercise: t("practice")' in javascript
+    for forbidden in (
+        "本地生成练习",
+        "本地确定性校验",
+        "locally generated exercise",
+        "local deterministic check",
+    ):
+        assert forbidden.lower() not in public_assets
