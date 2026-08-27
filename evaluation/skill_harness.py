@@ -16,12 +16,73 @@ from agentic_rag.skill_runtime.contracts import SkillContext
 from agentic_rag.skill_runtime.executor import SkillExecutor
 from agentic_rag.skill_runtime.registry import get_default_registry
 
+CASE_KEYS = {
+    "id", "skill", "input", "expected_status", "expected", "contains",
+    "answer_contains", "expected_paths", "absent_paths", "not_contains",
+}
 
-def value_at_path(value, dotted_path):
+
+def path_value(value, dotted_path):
     current = value
     for part in dotted_path.split("."):
-        current = current.get(part) if isinstance(current, dict) else getattr(current, part, None)
-    return current
+        if isinstance(current, dict):
+            if part not in current:
+                return False, None
+            current = current[part]
+        elif not hasattr(current, part):
+            return False, None
+        else:
+            current = getattr(current, part)
+    return True, current
+
+
+def value_at_path(value, dotted_path):
+    return path_value(value, dotted_path)[1]
+
+
+def _public_surface(actual):
+    exists, response = path_value(actual, "response")
+    return response if exists else {}
+
+
+def _serialized_public_surface(actual):
+    return json.dumps(_public_surface(actual), ensure_ascii=False, sort_keys=True, default=str)
+
+
+def _forbidden_values(case):
+    values = case.get("not_contains", [])
+    return [values] if isinstance(values, str) else values
+
+
+def check_case(case, status, actual):
+    reasons = []
+    unsupported = sorted(set(case) - CASE_KEYS)
+    if unsupported:
+        reasons.append(f"unsupported assertion keys: {', '.join(unsupported)}")
+    if status != case["expected_status"]:
+        reasons.append(f"status={status}")
+    for key, expected in case.get("expected", {}).items():
+        if actual.get(key) != expected:
+            reasons.append(f"{key}={actual.get(key)!r}")
+    for path, expected in case.get("expected_paths", {}).items():
+        if value_at_path(actual, path) != expected:
+            reasons.append(f"{path}={value_at_path(actual, path)!r}")
+    for path in case.get("absent_paths", []):
+        exists, _ = path_value(actual, path)
+        if exists:
+            reasons.append(f"{path} should be absent")
+    public_response = _public_surface(actual)
+    for forbidden in _forbidden_values(case):
+        if forbidden in _serialized_public_surface(actual):
+            reasons.append(f"public response contains {forbidden!r}")
+    for key, expected in case.get("contains", {}).items():
+        if expected not in str(actual.get(key, "")):
+            reasons.append(f"{key} missing {expected!r}")
+    if "answer_contains" in case:
+        answer = value_at_path(public_response, "answer")
+        if case["answer_contains"] not in str(answer or ""):
+            reasons.append(f"answer missing {case['answer_contains']!r}")
+    return reasons
 
 
 def run() -> dict:
@@ -38,25 +99,7 @@ def run() -> dict:
             )
             result = executor.execute(case["skill"], case["input"], context, pipeline="math.evaluation@1.0.0")
             actual = result.value.model_dump(mode="json") if result.value else {}
-            reasons = []
-            if result.status.value != case["expected_status"]:
-                reasons.append(f"status={result.status.value}")
-            for key, expected in case.get("expected", {}).items():
-                if actual.get(key) != expected:
-                    reasons.append(f"{key}={actual.get(key)!r}")
-            for path, expected in case.get("expected_paths", {}).items():
-                if value_at_path(actual, path) != expected:
-                    reasons.append(f"{path}={value_at_path(actual, path)!r}")
-            for path in case.get("absent_paths", []):
-                if value_at_path(actual, path) is not None:
-                    reasons.append(f"{path} should be absent")
-            for path, forbidden_values in case.get("not_contains", {}).items():
-                for forbidden in forbidden_values:
-                    if forbidden in str(value_at_path(actual, path)):
-                        reasons.append(f"{path} contains {forbidden!r}")
-            for key, expected in case.get("contains", {}).items():
-                if expected not in str(actual.get(key, "")):
-                    reasons.append(f"{key} missing {expected!r}")
+            reasons = check_case(case, result.status.value, actual)
             if reasons:
                 failures.append({"id": case["id"], "reasons": reasons})
     return {"passed": not failures, "total": total, "failures": failures}
