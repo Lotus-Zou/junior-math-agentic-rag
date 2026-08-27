@@ -7,6 +7,7 @@ from agentic_rag.exercises.models import (
     PublicExerciseState,
 )
 from agentic_rag.exercises.generator import AdaptiveExerciseGenerator, ExerciseGenerationError
+from agentic_rag.exercises.checking import StudentAnswerCheck, check_exercise_answer
 from agentic_rag.exercises.progression import (
     next_difficulty,
     parse_practice_preferences,
@@ -25,6 +26,8 @@ __all__ = [
     "PublicExerciseState",
     "TEMPLATE_REGISTRY",
     "AdaptiveExerciseGenerator",
+    "StudentAnswerCheck",
+    "check_exercise_answer",
     "generate_from_template",
     "next_difficulty",
     "parse_practice_preferences",

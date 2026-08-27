@@ -304,12 +304,16 @@ def normalize_response(
             PublicExerciseState,
             result["exercise_state"],
             (
+                "exercise_id",
+                "session_id",
                 "topic",
+                "grade",
                 "difficulty_delta",
                 "difficulty",
                 "exercise_type",
                 "template_id",
                 "fingerprint",
+                "knowledge_points",
             ),
         )
     else:

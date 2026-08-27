@@ -63,6 +63,7 @@ const state = {
   language: localStorage.getItem("mathtrace-language") || "zh",
   history: [],
   summary: "",
+  exercise: null,
   busy: false,
   latestResult: null
 };
@@ -372,13 +373,14 @@ async function submitQuestion(event) {
     const response = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, language: state.language, conversation_history: state.history, conversation_summary: state.summary }),
+      body: JSON.stringify({ query, language: state.language, conversation_history: state.history, conversation_summary: state.summary, exercise_state: state.exercise }),
       signal: controller.signal
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.detail || "request failed");
     if ("conversation_history" in result) state.history = result.conversation_history;
     if ("conversation_summary" in result) state.summary = result.conversation_summary;
+    if ("exercise_state" in result) state.exercise = result.exercise_state;
     state.latestResult = result;
     appendAssistantMessage(result);
   } catch (error) {
@@ -397,6 +399,7 @@ async function submitQuestion(event) {
 function resetConversation() {
   state.history = [];
   state.summary = "";
+  state.exercise = null;
   state.latestResult = null;
   elements.list.replaceChildren();
   elements.welcome.hidden = false;

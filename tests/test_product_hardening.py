@@ -1,5 +1,4 @@
 import csv
-from dataclasses import replace
 import time
 import unittest
 from unittest.mock import patch
@@ -62,27 +61,25 @@ class ProductHardeningTests(unittest.TestCase):
                 self.assertEqual(result["response_type"], "guided_exercise")
 
     def test_tampered_local_template_is_not_published_as_guided_exercise(self):
-        templates = getattr(fast_path, "LOCAL_TRANSITION_TEMPLATES", None)
-        self.assertIsNotNone(templates, "local transition templates must be structured and validated")
+        valid = fast_path._adaptive_exercise_generator.generate(
+            fast_path.ExerciseRequest(
+                topic="algebra", grade=7, difficulty=2, language="en", seed=7
+            )
+        )
+        corrupted = valid.model_copy(update={"solution": "incorrect hidden solution"})
 
-        for topic, query in (
-            ("algebra", "algebra"),
-            ("geometry", "geometry"),
-            ("linear_function", "linear function"),
+        with patch.object(
+            fast_path._adaptive_exercise_generator,
+            "generate",
+            return_value=corrupted,
         ):
-            with self.subTest(topic=topic):
-                corrupted = {
-                    **templates,
-                    topic: tuple(replace(template, hidden_answer="incorrect") for template in templates[topic]),
-                }
-                with patch.object(fast_path, "LOCAL_TRANSITION_TEMPLATES", corrupted):
-                    result = build_fast_response(query, [], language="en")
+            result = build_fast_response("algebra", [], language="en")
 
-                self.assertNotEqual(result["response_type"], "guided_exercise")
-                self.assertEqual(result["response_type"], "clarification_required")
-                self.assertNotIn("validation_evidence", result)
-                self.assertNotIn("hidden_answer", str(result).lower())
-                self.assertNotIn("local_template_validation_failed", str(result))
+        self.assertNotEqual(result["response_type"], "guided_exercise")
+        self.assertEqual(result["response_type"], "clarification_required")
+        self.assertNotIn("validation_evidence", result)
+        self.assertNotIn("incorrect hidden solution", str(result).lower())
+        self.assertNotIn("local_template_validation_failed", str(result))
     def test_difficulty_adjustment_without_exercise_requires_a_topic(self):
         result = build_fast_response("\u96be\u4e00\u70b9", [], language="zh")
 

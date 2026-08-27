@@ -150,3 +150,37 @@ class ExerciseStore:
             self._prune_locked(now)
             record = self._sessions.get(session_id)
             return record.value.model_copy(deep=True) if record is not None else None
+
+    def record_outcome(
+        self,
+        session_id: str,
+        exercise_id: str,
+        outcome: str,
+    ) -> ExerciseSessionState | None:
+        from agentic_rag.exercises.progression import update_mastery
+
+        now = self._now()
+        with self._lock:
+            self._prune_locked(now)
+            session_record = self._sessions.get(session_id)
+            exercise_record = self._exercises.get(exercise_id)
+            if session_record is None or exercise_record is None:
+                return None
+            session = session_record.value
+            exercise = exercise_record.value
+            if session.current_exercise_id != exercise_id:
+                return None
+            updated = session.model_copy(
+                update={
+                    "mastery": update_mastery(
+                        session.mastery,
+                        exercise.knowledge_points,
+                        outcome,
+                    )
+                },
+                deep=True,
+            )
+            expires_at = now + self._ttl_seconds
+            self._sessions[session_id] = _ExpiringRecord(updated, expires_at)
+            self._exercises[exercise_id] = _ExpiringRecord(exercise, expires_at)
+            return updated.model_copy(deep=True)

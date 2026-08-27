@@ -129,6 +129,25 @@ def test_store_is_safe_under_parallel_reads_and_writes():
     assert len(set(session_ids)) == 40
 
 
+def test_outcome_updates_only_the_current_private_session_exercise():
+    store = ExerciseStore(ttl_seconds=60)
+    first = store.start(make_exercise(), mastery={"等腰三角形": 0.5})
+    second_item = make_exercise(
+        exercise_id="ex-2",
+        problem="另一道等腰三角形题",
+        fingerprint="problem-fp-2",
+        answer_signature="60|60",
+    )
+    second = store.start(second_item, mastery={}, session_id=first.session_id)
+
+    assert store.record_outcome(second.session_id, first.exercise_id, "correct") is None
+    unchanged = store.get_session(second.session_id)
+    assert unchanged.mastery["等腰三角形"] == 0.5
+
+    updated = store.record_outcome(second.session_id, second.exercise_id, "correct")
+    assert updated.mastery["等腰三角形"] == pytest.approx(0.6)
+
+
 def test_ask_request_accepts_only_public_exercise_state():
     public = ExerciseStore(ttl_seconds=60).start(make_exercise(), mastery={})
     request = api.AskRequest(query="再来一道", exercise_state=public.model_dump())

@@ -81,7 +81,18 @@ function assertNoInternalCopy(text, state) {
   if (switchResponseMs > 3000) throw new Error(`Switch response exceeded 3s: ${switchResponseMs}ms`);
 
   await page.locator("#questionInput").fill("几何");
+  const geometryRequest = page.waitForRequest((request) => request.url().endsWith("/ask") && request.method() === "POST");
+  const geometryResponse = page.waitForResponse((response) => response.url().endsWith("/ask") && response.request().method() === "POST");
   await page.locator("#askForm").evaluate((form) => form.requestSubmit());
+  const firstGeometryRequest = await geometryRequest;
+  const firstGeometryResponse = await geometryResponse;
+  const firstGeometryBody = await firstGeometryResponse.json();
+  if (firstGeometryRequest.postDataJSON().exercise_state !== null) {
+    throw new Error("First exercise request unexpectedly carried stale exercise state");
+  }
+  if (!firstGeometryBody.exercise_state?.exercise_id || !firstGeometryBody.exercise_state?.session_id) {
+    throw new Error("Geometry response omitted opaque exercise state");
+  }
   const geometryMessage = page.locator(".message.assistant").last();
   const geometryAnswer = geometryMessage.locator(".assistant-answer");
   await geometryAnswer.waitFor({ timeout: 8000 });
@@ -96,11 +107,33 @@ function assertNoInternalCopy(text, state) {
   await geometryMessage.locator(".meta-chip").filter({ hasText: /^练习$/ }).waitFor();
   assertNoInternalCopy(await page.locator("body").innerText(), "Chinese rendered conversation");
 
+  await page.locator("#questionInput").fill("难一点");
+  const harderRequest = page.waitForRequest((request) => request.url().endsWith("/ask") && request.method() === "POST");
+  const harderResponse = page.waitForResponse((response) => response.url().endsWith("/ask") && response.request().method() === "POST");
+  await page.locator("#askForm").evaluate((form) => form.requestSubmit());
+  const harderRequestBody = (await harderRequest).postDataJSON();
+  const harderResponseBody = await (await harderResponse).json();
+  if (harderRequestBody.exercise_state?.exercise_id !== firstGeometryBody.exercise_state.exercise_id) {
+    throw new Error("Frontend did not return the active opaque exercise state");
+  }
+  if (harderResponseBody.exercise_state?.session_id !== firstGeometryBody.exercise_state.session_id) {
+    throw new Error("Harder exercise did not preserve the adaptive session");
+  }
+  if (harderResponseBody.exercise_state?.fingerprint === firstGeometryBody.exercise_state.fingerprint) {
+    throw new Error("Harder exercise repeated the previous problem");
+  }
+  if (harderResponseBody.exercise_state?.difficulty <= firstGeometryBody.exercise_state.difficulty) {
+    throw new Error("Harder command did not increase the exercise difficulty");
+  }
+  const harderMessage = page.locator(".message.assistant").last();
+  await harderMessage.locator(".assistant-answer").getByText("几何练习", { exact: false }).waitFor();
+  assertNoInternalCopy(await page.locator("body").innerText(), "Adaptive harder exercise");
+
   await page.locator('[data-language="en"]').click();
-  await geometryMessage.locator(".meta-chip").filter({ hasText: /^Practice$/ }).waitFor();
+  await harderMessage.locator(".meta-chip").filter({ hasText: /^Practice$/ }).waitFor();
   assertNoInternalCopy(await page.locator("body").innerText(), "English language switch with conversation");
   await page.locator('[data-language="zh"]').click();
-  await geometryMessage.locator(".meta-chip").filter({ hasText: /^练习$/ }).waitFor();
+  await harderMessage.locator(".meta-chip").filter({ hasText: /^练习$/ }).waitFor();
   assertNoInternalCopy(await page.locator("body").innerText(), "Chinese language switch with conversation");
 
   if (consoleErrors.length) throw new Error(`Console errors: ${consoleErrors.join(" | ")}`);

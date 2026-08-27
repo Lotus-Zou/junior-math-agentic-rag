@@ -624,7 +624,12 @@ def test_student_topic_keywords_never_override_latest_tutor_exercise(command):
         },
     ]
 
-    result = fast_path.build_fast_response(command, history, language="zh")
+    result = fast_path.build_fast_response(
+        command,
+        history,
+        language="zh",
+        exercise_state=geometry["exercise_state"],
+    )
 
     assert result["response_type"] == "guided_exercise"
     assert result["exercise_state"]["topic"] == "geometry"
@@ -643,10 +648,15 @@ def test_tampered_public_exercise_state_is_not_trusted():
         },
     ]
 
-    result = fast_path.build_fast_response("再来一道", history, language="zh")
+    result = fast_path.build_fast_response(
+        "再来一道",
+        history,
+        language="zh",
+        exercise_state=tampered_state,
+    )
 
-    assert result["response_type"] == "guided_exercise"
-    assert result["exercise_state"]["topic"] == "algebra"
+    assert result["response_type"] == "clarification_required"
+    assert result["exercise_state"] is None
 
 
 def test_latest_trusted_tutor_exercise_wins_after_geometry_feedback():
@@ -664,7 +674,12 @@ def test_latest_trusted_tutor_exercise_wins_after_geometry_feedback():
         },
     ]
 
-    result = fast_path.build_fast_response("难一点", history, language="zh")
+    result = fast_path.build_fast_response(
+        "难一点",
+        history,
+        language="zh",
+        exercise_state=geometry["exercise_state"],
+    )
 
     assert result["response_type"] == "guided_exercise"
     assert result["exercise_state"]["topic"] == "geometry"
@@ -685,7 +700,10 @@ def test_recent_exercise_topic_survives_language_switch(
     )
 
     result = fast_path.build_fast_response(
-        command, geometry["conversation_history"], language=command_language
+        command,
+        geometry["conversation_history"],
+        language=command_language,
+        exercise_state=geometry["exercise_state"],
     )
 
     assert result["response_type"] == "guided_exercise"

@@ -65,7 +65,17 @@ def knowledge_classify(data: QueryInput, _context) -> ClassificationOutput:
 
 
 def curriculum_solve(data: CurriculumSolveInput, _context) -> CurriculumSolveOutput:
-    response = build_fast_response(data.query, data.conversation_history, data.conversation_summary, data.language)
+    response = build_fast_response(
+        data.query,
+        data.conversation_history,
+        data.conversation_summary,
+        data.language,
+        exercise_state=(
+            data.exercise_state.model_dump(mode="json")
+            if data.exercise_state is not None
+            else None
+        ),
+    )
     return CurriculumSolveOutput(handled=response is not None, response=response)
 
 

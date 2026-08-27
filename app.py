@@ -29,6 +29,7 @@ from agentic_rag.cache import answer_cache
 from agentic_rag.exercises.models import PublicExerciseState as AdaptiveExerciseState
 from agentic_rag.graph import build_graph
 from agentic_rag.guardrails import input_guardrail_violation
+from agentic_rag.local_intents import parse_local_command
 from agentic_rag.metrics import FEEDBACK, observe_state
 from agentic_rag.response_contract import (
     capture_skill_contract, clarification_response, consume_skill_contract, normalize_response,
@@ -139,6 +140,11 @@ def _run_curriculum_skill(request: AskRequest) -> CurriculumSkillRun | None:
                 "conversation_summary": request.conversation_summary,
                 "conversation_history": request.conversation_history,
                 "language": request.language,
+                "exercise_state": (
+                    request.exercise_state.model_dump(mode="json")
+                    if request.exercise_state is not None
+                    else None
+                ),
             },
             context,
             pipeline="math.correction@1.0.0",
@@ -251,12 +257,16 @@ class _CacheSource(BaseModel):
 class _CacheExerciseState(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
+    exercise_id: str | None = None
+    session_id: str | None = None
     topic: str = ""
+    grade: int | None = Field(default=None, ge=7, le=9)
     difficulty_delta: int = 0
     difficulty: int | None = None
     exercise_type: str | None = None
     template_id: str | None = None
     fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    knowledge_points: list[str] = Field(default_factory=list)
 
 
 class _CacheClarification(BaseModel):
@@ -533,6 +543,40 @@ def _cached_response(cached: Any, request: AskRequest) -> dict[str, Any]:
     return _public_response(record["public"], request, contract=record["contract"])
 
 
+def _bypass_answer_cache(request: AskRequest) -> bool:
+    if request.exercise_state is not None:
+        return True
+    command = parse_local_command(request.query, request.language)
+    if command is not None and command.action in {
+        "practice",
+        "next_exercise",
+        "adjust_difficulty",
+    }:
+        return True
+    normalized = unicodedata.normalize("NFKC", request.query).lower()
+    has_topic = any(
+        marker in normalized
+        for marker in ("几何", "代数", "一次函数", "geometry", "algebra", "linear function")
+    )
+    asks_for_practice = any(
+        marker in normalized
+        for marker in ("练习", "来一道", "出一道", "生成", "give me", "practice")
+    )
+    return has_topic and asks_for_practice
+
+
+def _cacheable_response(response: dict[str, Any], cache_enabled: bool) -> bool:
+    if not cache_enabled or response.get("response_type") not in {
+        "verified_answer",
+        "guided_exercise",
+    }:
+        return False
+    exercise_state = response.get("exercise_state")
+    return not (
+        isinstance(exercise_state, dict) and exercise_state.get("exercise_id")
+    )
+
+
 def _readiness_checks() -> dict[str, bool]:
     return {
         "static_ui": (STATIC_DIR / "index.html").exists(),
@@ -573,7 +617,8 @@ async def ask(request: AskRequest):
             raise HTTPException(status_code=400, detail="输入不符合数学教学系统的安全约束，请只提交题目、解题步骤或相关追问。")
 
         cache_payload = request.model_dump()
-        cached = answer_cache.get(cache_payload)
+        cache_enabled = not _bypass_answer_cache(request)
+        cached = answer_cache.get(cache_payload) if cache_enabled else None
         if cached is not None:
             response = _cached_response(cached, request)
             observe_state({"response": response["answer"], "metrics": response["metrics"]}, 0)
@@ -598,7 +643,7 @@ async def ask(request: AskRequest):
             }
             persist_trace(trace_state)
             observe_state(trace_state, latency)
-            if response["response_type"] in {"verified_answer", "guided_exercise"}:
+            if _cacheable_response(response, cache_enabled):
                 cache_contract = _bind_contract_to_public_response(
                     fast_contract, response
                 )
@@ -617,6 +662,11 @@ async def ask(request: AskRequest):
                     "response_language": request.language,
                     "conversation_history": request.conversation_history,
                     "conversation_summary": request.conversation_summary,
+                    "exercise_state": (
+                        request.exercise_state.model_dump(mode="json")
+                        if request.exercise_state is not None
+                        else None
+                    ),
                     "correction_attempts": 0,
                     "validation_issues": [],
                 },
@@ -643,7 +693,7 @@ async def ask(request: AskRequest):
         }
         response = _public_response(raw_response, request, contract=graph_contract)
         response["metrics"]["latency_ms"] = round(latency * 1000, 2)
-        if response["response_type"] in {"verified_answer", "guided_exercise"}:
+        if _cacheable_response(response, cache_enabled):
             cache_contract = _bind_contract_to_public_response(
                 graph_contract, response
             )

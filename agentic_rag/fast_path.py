@@ -12,6 +12,21 @@ import uuid
 
 from agentic_rag.domain.schemas import PublicExerciseState
 from agentic_rag.deterministic_tutor import solve_curriculum_problem
+from agentic_rag.exercises.checking import check_exercise_answer
+from agentic_rag.exercises.generator import (
+    AdaptiveExerciseGenerator,
+    ExerciseGenerationError,
+)
+from agentic_rag.exercises.models import (
+    ExerciseRequest,
+    ExerciseSessionState,
+    GeneratedExercise,
+    PublicExerciseState as AdaptivePublicExerciseState,
+)
+from agentic_rag.exercises.progression import next_difficulty, parse_practice_preferences
+from agentic_rag.exercises.store import ExerciseStore
+from agentic_rag.exercises.templates import TEMPLATE_REGISTRY
+from agentic_rag.exercises.validation import validate_generated_exercise
 from agentic_rag.local_intents import parse_local_command
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
 from agentic_rag.response_contract import (
@@ -27,6 +42,9 @@ CORE_SOURCE = {
     "chapter": "代数",
     "rank": 1,
 }
+
+_adaptive_exercise_store = ExerciseStore()
+_adaptive_exercise_generator = AdaptiveExerciseGenerator()
 
 SIMILAR_MARKERS = (
     "再出一个类似的题",
@@ -458,6 +476,309 @@ def _topic_clarification(query: str, history: list[dict[str, str]], summary: str
             "metrics": {"tool_calls": 0},
         },
         "clarification_required",
+    )
+
+
+def _adaptive_state_clarification(
+    query: str,
+    history: list[dict[str, Any]],
+    summary: str,
+    language: str,
+) -> dict:
+    answer = (
+        "That exercise is no longer available. Choose algebra, geometry, or linear functions and I will create a fresh verified problem."
+        if language == "en"
+        else "这道练习已失效。请选择代数、几何或一次函数，我会重新生成一道经过校验的新题。"
+    )
+    return normalize_response(
+        {
+            "answer": answer,
+            "intent": "exercise_expired",
+            "sources": [],
+            "validation_passed": True,
+            "conversation_history": [
+                *_public_history(history),
+                {"role": "student", "content": query},
+                {"role": "tutor", "content": answer},
+            ],
+            "conversation_summary": summary,
+            "clarification": {
+                "missing": [
+                    "a fresh exercise topic" if language == "en" else "新的练习主题"
+                ]
+            },
+            "metrics": {"tool_calls": 0},
+        },
+        "clarification_required",
+    )
+
+
+def _resolve_adaptive_exercise(
+    value: Any,
+) -> tuple[AdaptivePublicExerciseState, ExerciseSessionState, GeneratedExercise] | None:
+    try:
+        public = AdaptivePublicExerciseState.model_validate(value)
+    except (TypeError, ValueError):
+        return None
+    session = _adaptive_exercise_store.get_session(public.session_id)
+    exercise = _adaptive_exercise_store.get_exercise(public.exercise_id)
+    if session is None or exercise is None or session.current_exercise_id != exercise.exercise_id:
+        return None
+    expected = {
+        "exercise_id": exercise.exercise_id,
+        "session_id": session.session_id,
+        "topic": exercise.topic,
+        "grade": exercise.grade,
+        "difficulty": exercise.difficulty,
+        "exercise_type": exercise.exercise_type,
+        "template_id": exercise.template_id,
+        "fingerprint": exercise.fingerprint,
+        "knowledge_points": exercise.knowledge_points,
+    }
+    if public.model_dump(mode="json") != expected:
+        return None
+    return public, session, exercise
+
+
+def _explicit_adaptive_practice_request(query: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", query or "").strip().lower()
+    if solve_curriculum_problem(query, "zh") is not None or solve_curriculum_problem(
+        query, "en"
+    ) is not None:
+        return False
+    topic = bool(
+        re.search(
+            r"几何|代数|一次函数|geometry|algebra|linear\s+function",
+            normalized,
+        )
+    )
+    practice = bool(
+        re.search(
+            r"(?:来|出|生成).{0,10}(?:题|练习)|(?:题|练习).{0,8}(?:做|练)|"
+            r"give\s+me|generate\s+(?:an?\s+)?(?:exercise|problem)|practice",
+            normalized,
+        )
+    )
+    preference = len(normalized) <= 32 and bool(
+        re.search(r"难一点|更难|简单|基础|困难|harder|easier|easy|challenging", normalized)
+    )
+    return topic and (practice or preference)
+
+
+def _nearest_supported_request(request: ExerciseRequest) -> ExerciseRequest | None:
+    definitions = [
+        definition
+        for definition in TEMPLATE_REGISTRY.values()
+        if definition.topic == request.topic
+        and request.grade in definition.grades
+        and (
+            request.exercise_type == "mixed"
+            or definition.exercise_type == request.exercise_type
+        )
+    ]
+    available = sorted({level for item in definitions for level in item.difficulties})
+    if not available:
+        return None
+    nearest = min(available, key=lambda level: (abs(level - request.difficulty), level))
+    return request.model_copy(update={"difficulty": nearest}, deep=True)
+
+
+def _adaptive_private_state(exercise: GeneratedExercise) -> ValidatedExerciseState | None:
+    return validated_exercise_state(
+        exercise.template_id,
+        exercise.topic,
+        exercise.solution,
+        exercise.solution,
+        exercise.fingerprint,
+    )
+
+
+def _adaptive_generated_response(
+    request: ExerciseRequest,
+    query: str,
+    history: list[dict[str, Any]],
+    summary: str,
+    language: str,
+    current: ExerciseSessionState | None,
+) -> dict:
+    try:
+        exercise = _adaptive_exercise_generator.generate(request)
+    except ExerciseGenerationError:
+        fallback = _nearest_supported_request(request)
+        if fallback is None:
+            return _invalid_local_template_response(query, history, summary, language)
+        exercise = _adaptive_exercise_generator.generate(fallback)
+    if not validate_generated_exercise(exercise).passed:
+        return _invalid_local_template_response(query, history, summary, language)
+    private_state = _adaptive_private_state(exercise)
+    if private_state is None:
+        return _invalid_local_template_response(query, history, summary, language)
+    public = _adaptive_exercise_store.start(
+        exercise,
+        mastery=current.mastery if current is not None else {},
+        session_id=current.session_id if current is not None else None,
+    )
+    answer = _exercise_answer(exercise.topic, exercise.problem, exercise.hint, language)
+    response = _base_response(query, answer, history, summary)
+    response.update(
+        {
+            "intent": f"{exercise.topic}_exercise",
+            "knowledge_points": exercise.knowledge_points,
+            "sources": [
+                {
+                    **CORE_SOURCE,
+                    "chapter": _TOPIC_CHAPTERS[exercise.topic],
+                }
+            ],
+            "validation_passed": True,
+            "validation_evidence": {"kind": "deterministic", "passed": True},
+            "exercise_state": public.model_dump(mode="json"),
+            "metrics": {"tool_calls": 0},
+        }
+    )
+    return normalize_response(
+        response,
+        "guided_exercise",
+        private_exercise=private_state,
+    )
+
+
+def _adaptive_command_response(
+    query: str,
+    history: list[dict[str, Any]],
+    summary: str,
+    language: str,
+    exercise_state: Any,
+) -> dict | None:
+    command = parse_local_command(query, language)
+    composite_practice = command is None and _explicit_adaptive_practice_request(query)
+    if command is None and not composite_practice:
+        return None
+    if command is not None and command.action in {"new_question", "reset"}:
+        return None
+
+    resolved = _resolve_adaptive_exercise(exercise_state) if exercise_state is not None else None
+    current = resolved[1] if resolved is not None else None
+    if (
+        command is not None
+        and command.action in {"next_exercise", "adjust_difficulty"}
+        and current is None
+    ):
+        if exercise_state is not None:
+            return _adaptive_state_clarification(query, history, summary, language)
+        return None
+
+    request = parse_practice_preferences(query, current)
+    updates: dict[str, Any] = {"language": language}
+    if command is not None and command.topic is not None:
+        updates["topic"] = command.topic
+    if command is not None and command.action == "adjust_difficulty" and current is not None:
+        updates["difficulty"] = next_difficulty(
+            current.current_difficulty or request.difficulty,
+            "unknown",
+            command.difficulty_delta,
+        )
+        updates["exercise_type"] = "mixed"
+    request = request.model_copy(update=updates, deep=True)
+    return _adaptive_generated_response(
+        request,
+        query,
+        history,
+        summary,
+        language,
+        current,
+    )
+
+
+def _looks_like_new_problem(query: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", query or "").lower()
+    return bool(
+        re.search(
+            r"解方程|已知.{2,}求|求证|一道.{0,4}题|solve\s+the\s+equation|"
+            r"given.{2,}find|new\s+problem",
+            normalized,
+        )
+    )
+
+
+def _adaptive_answer_response(
+    query: str,
+    history: list[dict[str, Any]],
+    summary: str,
+    language: str,
+    exercise_state: Any,
+) -> dict | None:
+    if exercise_state is None or parse_local_command(query, language) is not None:
+        return None
+    resolved = _resolve_adaptive_exercise(exercise_state)
+    if resolved is None:
+        return _adaptive_state_clarification(query, history, summary, language)
+    public, session, exercise = resolved
+    normalized = unicodedata.normalize("NFKC", query or "").strip().lower()
+    asks_for_hint = any(
+        marker in normalized
+        for marker in ("提示", "不会", "没思路", "hint", "stuck")
+    )
+    checked = check_exercise_answer(
+        _adaptive_exercise_store,
+        exercise.exercise_id,
+        query,
+    )
+    if not asks_for_hint and not checked.passed and _looks_like_new_problem(query):
+        return None
+
+    if asks_for_hint:
+        answer = (
+            f"**Another hint**\n{exercise.hint}\nWrite the key relation first; the answer remains hidden."
+            if language == "en"
+            else f"**再给一个提示**\n{exercise.hint}\n先写出关键关系，答案继续隐藏。"
+        )
+        outcome = "unknown"
+    elif checked.passed:
+        answer = (
+            f"**Check passed**\nYour conclusion is correct.\n\n**Complete solution**\n{exercise.solution}"
+            if language == "en"
+            else f"**检查通过**\n你的结论正确。\n\n**完整解答**\n{exercise.solution}"
+        )
+        outcome = "correct"
+    else:
+        answer = (
+            f"**Not quite yet**\nThe conclusion is incomplete or incorrect. Recheck: {exercise.hint} I will keep the answer hidden while you revise it."
+            if language == "en"
+            else f"**暂未通过**\n结论还不完整或存在错误。请重点检查：{exercise.hint} 我会继续隐藏答案，等你修改后再核对。"
+        )
+        outcome = "incorrect"
+    _adaptive_exercise_store.record_outcome(
+        session.session_id,
+        exercise.exercise_id,
+        outcome,
+    )
+    response = _base_response(query, answer, history, summary)
+    response.update(
+        {
+            "intent": "adaptive_answer_check" if not asks_for_hint else "adaptive_hint",
+            "knowledge_points": exercise.knowledge_points,
+            "sources": [
+                {
+                    **CORE_SOURCE,
+                    "chapter": _TOPIC_CHAPTERS[exercise.topic],
+                }
+            ],
+            "validation_passed": True,
+            "validation_evidence": {"kind": "deterministic", "passed": True},
+            "exercise_state": public.model_dump(mode="json"),
+            "metrics": {"tool_calls": 0},
+        }
+    )
+    if checked.passed and not asks_for_hint:
+        return normalize_response(response, "verified_answer")
+    private_state = _adaptive_private_state(exercise)
+    if private_state is None:
+        return _adaptive_state_clarification(query, history, summary, language)
+    return normalize_response(
+        response,
+        "guided_exercise",
+        private_exercise=private_state,
     )
 
 
@@ -1386,10 +1707,25 @@ def build_fast_response(
     history: list[dict[str, str]],
     summary: str = "",
     language: str = "zh",
+    exercise_state: Any = None,
 ) -> dict | None:
     """Return a deterministic response when the request has a safe local implementation."""
     return (
-        _local_command_response(query, history, summary, language)
+        _adaptive_command_response(
+            query,
+            history,
+            summary,
+            language,
+            exercise_state,
+        )
+        or _adaptive_answer_response(
+            query,
+            history,
+            summary,
+            language,
+            exercise_state,
+        )
+        or _local_command_response(query, history, summary, language)
         or _new_question_response(query, language)
         or _geometry_exercise_response(query, history, summary, language)
         or _geometry_answer_response(query, history, summary, language)

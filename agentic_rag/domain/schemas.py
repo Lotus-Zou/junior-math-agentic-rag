@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from agentic_rag.exercises.models import PublicExerciseState as AdaptiveExerciseState
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -50,6 +52,7 @@ class ClassificationOutput(StrictModel):
 class CurriculumSolveInput(QueryInput):
     language: Literal["zh", "en"] = "zh"
     conversation_history: list[dict[str, str]] = Field(default_factory=list)
+    exercise_state: AdaptiveExerciseState | None = None
 
 
 class RetrievalInput(StrictModel):
@@ -160,12 +163,16 @@ class PublicConversationTurn(StrictModel):
 
 
 class PublicExerciseState(StrictModel):
+    exercise_id: str | None = None
+    session_id: str | None = None
     topic: str = ""
+    grade: int | None = Field(default=None, ge=7, le=9)
     difficulty_delta: int = 0
     difficulty: int | None = None
     exercise_type: str | None = None
     template_id: str | None = None
     fingerprint: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    knowledge_points: list[str] = Field(default_factory=list)
 
 
 class PublicClarification(StrictModel):

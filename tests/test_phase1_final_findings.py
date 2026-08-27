@@ -160,7 +160,6 @@ def test_stale_graph_evidence_is_not_published_or_cached(client, monkeypatch):
             ],
             "ZH_EXERCISES",
         ),
-        ("出一个几何题我做做", [], "ZH_GEOMETRY_EXERCISES"),
     ],
 )
 def test_legacy_guided_routes_reject_tampered_hidden_answers(
@@ -244,7 +243,12 @@ def test_recent_exercise_topic_wins_across_topic_history(command):
     algebra = build_fast_response("代数", [], language="zh")
     geometry = build_fast_response("几何", algebra["conversation_history"], language="zh")
 
-    result = build_fast_response(command, geometry["conversation_history"], language="zh")
+    result = build_fast_response(
+        command,
+        geometry["conversation_history"],
+        language="zh",
+        exercise_state=geometry["exercise_state"],
+    )
 
     assert result["response_type"] == "guided_exercise"
     assert result["exercise_state"]["topic"] == "geometry"
