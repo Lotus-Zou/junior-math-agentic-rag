@@ -4,7 +4,7 @@ description: "Junior mathematics answer check business capability with typed inp
 input_schema: agentic_rag.domain.schemas.AnswerCheckInput
 output_schema: agentic_rag.domain.schemas.CriticOutput
 handler: agentic_rag.skills.answer_check.handler.handle
-timeout_ms: 1000
+timeout_ms: 3000
 max_attempts: 1
 idempotent: true
 side_effects: []
