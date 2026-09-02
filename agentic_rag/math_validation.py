@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 import re
 
 
@@ -97,6 +98,12 @@ def deterministic_equation_answer(
 
 
 def _equation_check(query: str, answer: str) -> list[str]:
+    normalized_query = (query or "").lower()
+    if not any(
+        marker in normalized_query
+        for marker in ("解方程", "方程的解", "solve the equation", "solve equation")
+    ):
+        return []
     try:
         from sympy import solve, symbols
         from sympy.parsing.sympy_parser import implicit_multiplication_application, parse_expr, standard_transformations
@@ -121,8 +128,65 @@ def _equation_check(query: str, answer: str) -> list[str]:
         return ["方程格式无法由确定性校验器解析，需 Critic 复核"]
 
 
+def _strict_threshold_check(query: str, answer: str) -> list[str]:
+    """Distinguish reaching a threshold from first exceeding it."""
+    normalized_query = (query or "").lower()
+    strict_markers = (
+        "starts earning money",
+        "start earning money",
+        "make a profit",
+        "starts making money",
+        "start making money",
+        "开始盈利",
+        "开始赚钱",
+        "产生利润",
+        "超过成本",
+    )
+    if not any(marker in normalized_query for marker in strict_markers):
+        return []
+
+    final_match = re.search(
+        r"(?:答案|answer)\s*[：:]?\s*[$¥￥]?\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s*$",
+        answer or "",
+        flags=re.IGNORECASE,
+    )
+    if not final_match:
+        return []
+    try:
+        final_value = Decimal(final_match.group(1).replace(",", ""))
+    except InvalidOperation:
+        return []
+
+    divisions = re.findall(
+        r"[$¥￥]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:÷|/)\s*"
+        r"[$¥￥]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)\s*=\s*"
+        r"[$¥￥]?\s*(\d+(?:,\d{3})*(?:\.\d+)?)",
+        answer or "",
+    )
+    for numerator_text, denominator_text, quotient_text in divisions:
+        try:
+            numerator = Decimal(numerator_text.replace(",", ""))
+            denominator = Decimal(denominator_text.replace(",", ""))
+            shown_quotient = Decimal(quotient_text.replace(",", ""))
+        except InvalidOperation:
+            continue
+        if denominator == 0:
+            continue
+        exact_quotient = numerator / denominator
+        if (
+            exact_quotient == exact_quotient.to_integral_value()
+            and shown_quotient == exact_quotient
+            and final_value == exact_quotient
+        ):
+            return [
+                "达到盈亏平衡只表示累计收益等于成本；题目要求开始盈利时，需要进入下一个完整周期"
+            ]
+    return []
+
+
 def deterministic_math_checks(query: str, answer: str, document_count: int) -> dict:
     issues = _equation_check(query, answer)
+    issues.extend(_strict_threshold_check(query, answer))
     if re.search(r"/[ ]*0(?:\D|$)", answer or ""):
         issues.append("推导中出现除以 0")
     citations = set(re.findall(r"\[(\d+)\]", answer or ""))

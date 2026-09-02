@@ -1,0 +1,7 @@
+cases:
+  - id: structured_image
+    kind: contract
+    expected_status: OK
+  - id: low_confidence_requires_confirmation
+    kind: adversarial
+    expected_status: OK

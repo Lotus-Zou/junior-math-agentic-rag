@@ -10,5 +10,119 @@
     "answer_relevance_after": 0.78
   },
   "adoption": "导师采纳并用于校企合作教育项目",
-  "verification_command": "python evaluation/evaluation.py --mode e2e --limit 0 --version <version>"
+  "verification_command": "python evaluation/evaluation.py --mode e2e --dataset ragas --limit 0 --version <version>",
+  "current_workspace_smoke": {
+    "run_date": "2026-08-29",
+    "production_api": {
+      "ceval_middle_school_mathematics": {
+        "evaluated": 2,
+        "accuracy": 0.5,
+        "mean_latency_ms": 25520.925
+      },
+      "gsm8k": {
+        "evaluated": 2,
+        "accuracy": 1.0,
+        "mean_latency_ms": 24843.37
+      }
+    },
+    "ragas_math_knowledge": {
+      "evaluated": 5,
+      "context_precision": 0.9999999999266667,
+      "context_recall": 1.0,
+      "faithfulness": 0.9259615384615385,
+      "answer_relevance": 0.9378491189956717,
+      "knowledge_point_accuracy": 1.0,
+      "intent_accuracy": 1.0,
+      "mean_production_latency_ms": 18370.344,
+      "report": "evaluation/reports/ragas-rag-5-taxonomy-fix-v2_e2e.csv"
+    },
+    "tavily": {
+      "mode": "live",
+      "returned_https_sources": 3
+    },
+    "mteb_sampled_smoke": {
+      "configuration": "BGE-M3, 50 queries, 512 corpus documents, all sampled positives retained, max_seq_length=128",
+      "scifact": {
+        "ndcg_at_10": 0.79461,
+        "map_at_10": 0.75925,
+        "recall_at_10": 0.9
+      },
+      "covid_retrieval": {
+        "ndcg_at_10": 0.92508,
+        "map_at_10": 0.90667,
+        "recall_at_10": 0.98
+      },
+      "report": "evaluation/reports/mteb/sampled-20260829/summary.json"
+    },
+    "limitations": [
+      "C-Eval 与 GSM8K 各只评测 2 条，仅用于生产 API 链路 smoke。",
+      "RAGAS 数学知识专项集只有 5 条，不具备统计显著性，不能替代 1000 条全量领域评测。",
+      "MTEB 结果来自 50-query/512-document 确定性采样 smoke，不能作为官方全任务榜单成绩。",
+      "历史 Answer Relevance 0.50 -> 0.78、Recall 提升 15% 和幻觉率 35% -> 10% 仍未按原始 2025 方法复现。"
+    ]
+  },
+  "current_workspace_formal": {
+    "run_completed_at": "2026-09-02",
+    "consolidated_report": "evaluation/reports/formal-evaluation-20260902.json",
+    "full_pytest": {
+      "collected": 1031,
+      "passed": 1031,
+      "failed": 0
+    },
+    "public_math": {
+      "ceval_middle_school_mathematics": {
+        "scope": "full_public_labeled_val",
+        "evaluated": 19,
+        "accuracy": 1.0,
+        "blank_predictions": 0
+      },
+      "gsm8k": {
+        "scope": "full_official_main_test",
+        "evaluated": 1319,
+        "accuracy": 0.8059135708870356,
+        "blank_predictions": 238,
+        "numeric_wrong": 18,
+        "conditional_accuracy": 0.9833487511563367
+      }
+    },
+    "official_retrieval": {
+      "configuration": "BAAI/bge-m3, max_seq_length=512, CUDA, no sampling",
+      "scifact": {
+        "corpus": 5183,
+        "judged_queries": 300,
+        "ndcg_at_10": 0.6415,
+        "map_at_10": 0.59201,
+        "recall_at_10": 0.77511
+      },
+      "covid_retrieval": {
+        "corpus": 100001,
+        "judged_queries": 949,
+        "ndcg_at_10": 0.76522,
+        "map_at_10": 0.72543,
+        "recall_at_10": 0.8883
+      }
+    },
+    "human_labeled_mistake_diagnosis": {
+      "dataset": "tasksource/PRM800K phase2_test",
+      "scope": "fixed-seed 300-case subset",
+      "evaluated": 300,
+      "first_error_exact_accuracy": 0.6933333333333334,
+      "first_error_within_one_accuracy": 0.81,
+      "error_detection_rate": 0.98,
+      "ragas": {
+        "answer_relevance": 0.6084333371564452,
+        "faithfulness": 0.012794973544973545,
+        "context_precision": 0.0,
+        "context_recall": 0.0,
+        "empty_context_caveat": true
+      }
+    },
+    "limitations": [
+      "C-Eval reports the complete public labeled validation split, not the hidden official test.",
+      "GSM8K includes 238 blank production responses as incorrect; the self-contained Critic fix is unit-tested but pending a full API rerun.",
+      "PRM800K is English competition mathematics rather than a Chinese junior-high error-category benchmark.",
+      "The PRM800K audit route has empty retrieval contexts, so its context and faithfulness metrics are not retrieval-quality evidence.",
+      "Historical 2025 lift claims remain unverified and are not replaced by these 2026 absolute scores."
+    ]
+  }
 }

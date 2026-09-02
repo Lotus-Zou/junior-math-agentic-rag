@@ -1,0 +1,7 @@
+cases:
+  - id: verified_seed_fallback
+    kind: reliability
+    expected_status: OK
+  - id: private_answer_not_exposed
+    kind: security
+    expected_status: OK

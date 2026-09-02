@@ -68,6 +68,30 @@ def test_composite_preference_request_is_parsed():
     assert (request.grade, request.topic, request.difficulty) == (8, "geometry", 3)
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "帮我出一道九年级的数学竞赛题",
+        "[初中9年级] 生成一道竞赛题",
+    ],
+)
+def test_grade_nine_competition_request_generates_verified_challenge(query):
+    request = parse_practice_preferences(query, current=None)
+
+    assert (
+        request.grade,
+        request.topic,
+        request.difficulty,
+        request.exercise_type,
+    ) == (9, "algebra", 5, "mixed")
+    item = AdaptiveExerciseGenerator().generate(
+        request.model_copy(update={"seed": 29})
+    )
+    assert item.template_id == "alg.consecutive_squares.v1"
+    assert validate_generated_exercise(item).passed is True
+    assert item.answer_signature not in item.problem
+
+
 def test_explicit_easy_function_request_overrides_history():
     current = ExerciseSessionState(
         session_id="s1",

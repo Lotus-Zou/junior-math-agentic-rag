@@ -22,6 +22,7 @@ _EXPECTED_METADATA = {
     "geo.congruence.sas_proof.v1": ("geometry", {8}, {3, 4}, "proof"),
     "alg.linear_equation.v1": ("algebra", {7}, {1, 2, 3}, "calculation"),
     "alg.factorization.difference.v1": ("algebra", {8}, {2, 3}, "calculation"),
+    "alg.consecutive_squares.v1": ("algebra", {9}, {4, 5}, "mixed"),
     "fn.slope_intercept.v1": ("linear_function", {8}, {1, 2}, "calculation"),
     "fn.two_points.v1": ("linear_function", {8, 9}, {2, 3, 4}, "application"),
 }
@@ -199,6 +200,37 @@ def _validate_difference_of_squares(item: GeneratedExercise) -> list[str]:
     return issues
 
 
+def _validate_consecutive_squares(item: GeneratedExercise) -> list[str]:
+    p = item.parameters
+    first, numbers, square_sum = (
+        p[key] for key in ("first", "numbers", "square_sum")
+    )
+    if (
+        not isinstance(first, int)
+        or isinstance(first, bool)
+        or not isinstance(square_sum, int)
+        or isinstance(square_sum, bool)
+        or not isinstance(numbers, list)
+        or len(numbers) != 3
+        or not all(isinstance(value, int) and not isinstance(value, bool) for value in numbers)
+    ):
+        return ["consecutive-squares parameters must be integers"]
+    issues = []
+    expected_numbers = [first, first + 1, first + 2]
+    if first <= 0 or numbers != expected_numbers:
+        issues.append("numbers are not three consecutive positive integers")
+    if square_sum != sum(value * value for value in numbers):
+        issues.append("square sum does not match the generated integers")
+    expected_signature = f"numbers={','.join(map(str, numbers))}"
+    if item.answer_signature != expected_signature:
+        issues.append("answer_signature does not match the consecutive integers")
+    if str(square_sum) not in item.problem:
+        issues.append("problem does not contain the generated square sum")
+    if not all(str(value) in item.solution for value in numbers):
+        issues.append("solution does not state every verified integer")
+    return issues
+
+
 def _validate_slope_intercept(item: GeneratedExercise) -> list[str]:
     p = item.parameters
     k, b, y0, y1 = (p[key] for key in ("k", "b", "y0", "y1"))
@@ -241,6 +273,7 @@ _VALIDATORS = {
     "geo.congruence.sas_proof.v1": _validate_sas,
     "alg.linear_equation.v1": _validate_linear_equation,
     "alg.factorization.difference.v1": _validate_difference_of_squares,
+    "alg.consecutive_squares.v1": _validate_consecutive_squares,
     "fn.slope_intercept.v1": _validate_slope_intercept,
     "fn.two_points.v1": _validate_two_points,
 }

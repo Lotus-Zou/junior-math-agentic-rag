@@ -30,7 +30,7 @@ class SkillManifest(BaseModel):
     input_schema: str
     output_schema: str
     handler: str
-    timeout_ms: int = Field(default=1500, ge=1, le=8000)
+    timeout_ms: int = Field(default=1500, ge=1, le=120000)
     max_attempts: int = Field(default=1, ge=1, le=3)
     idempotent: bool = True
     side_effects: list[str] = Field(default_factory=list)
@@ -89,4 +89,3 @@ class SkillManifest(BaseModel):
             return cls.model_validate(payload)
         except Exception as exc:
             raise ManifestError(f"Invalid Skill manifest {source}: {exc}") from exc
-

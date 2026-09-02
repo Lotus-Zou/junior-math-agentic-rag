@@ -1,0 +1,68 @@
+{
+  "generated_at": "2026-09-02",
+  "download_policy": {
+    "primary": "official dataset repository",
+    "fallback": "https://hf-mirror.com",
+    "rule": "Use the domestic mirror only after the official endpoint fails; preserve the same repository revision and verify local fingerprints or SHA256 before evaluation."
+  },
+  "datasets": {
+    "ceval_middle_school_mathematics": {
+      "repository": "ceval/ceval-exam",
+      "config": "middle_school_mathematics",
+      "split": "val",
+      "labeled_rows": 19,
+      "datasets_cache_fingerprint": "617524a00b307ff6f9933702f724131fe12ca7ce",
+      "latest_full_report": "evaluation/reports/public_benchmarks/full-ceval-val-critic-policy-20260829_summary.json",
+      "scope_note": "Public labeled validation split; not the hidden official test score."
+    },
+    "gsm8k": {
+      "repository": "openai/gsm8k",
+      "config": "main",
+      "split": "test",
+      "labeled_rows": 1319,
+      "datasets_cache_fingerprint": "740312add88f781978c0658806c59bc2815b9866",
+      "latest_full_report": "evaluation/reports/public_benchmarks/full-gsm8k-test-20260829_summary.json"
+    },
+    "prm800k": {
+      "repository": "tasksource/PRM800K",
+      "split": "phase2_test",
+      "revision": "547b19506677a59037ee888838834b65e9b1ddd4",
+      "license": "MIT",
+      "mirror": "https://hf-mirror.com/datasets/tasksource/PRM800K",
+      "file": "phase2_test.jsonl",
+      "records": 2762,
+      "sha256": "6B172EFA884AC8341A946DD82E06947C135B7254109FB3F7AA907C715D98AAAD",
+      "selection": "Fixed-seed 300-case subset from human found_error labels, excluding explicit out-of-curriculum topics.",
+      "latest_full_report": "evaluation/reports/prm800k/full-prm300-official-v10-20260901/summary.json"
+    },
+    "scifact": {
+      "task": "SciFact",
+      "split": "test",
+      "corpus": 5183,
+      "judged_queries": 300,
+      "qrels": 339,
+      "dataset_revision": "0228b52cf27578f30900b9e5271d331663a030d7",
+      "latest_full_report": "evaluation/reports/mteb/full-official-20260902/summary.json",
+      "files": {
+        "corpus.jsonl": "DEC31C8182F3D744C7D2C09423756FD1D17CBEF75808DB13BA01CC0AAB4D1AC6",
+        "queries.jsonl": "8FF84A7C903F722981CD8D595C022660140C51867B27608A6D4910DB86080313",
+        "qrels.jsonl": "DA33FC0EDC7447D43908EA92BF11DE010E361AC43228295F09BDCD33CE14730C"
+      }
+    },
+    "covid_retrieval": {
+      "task": "CovidRetrieval",
+      "split": "dev",
+      "corpus": 100001,
+      "judged_queries": 949,
+      "qrels": 959,
+      "dataset_revision": "1271c7809071a13532e05f25fb53511ffce77117",
+      "qrel_revision": "a9f41b7cdf24785531d12417ce0d1157ed4b39ca",
+      "latest_full_report": "evaluation/reports/mteb/full-official-covid-20260902/summary.json",
+      "files": {
+        "corpus.parquet": "CF12A40059C94E2068F29E53D2DCC7C2F7C5FF5051A1DFE691C8033E5C25F516",
+        "queries.parquet": "A45BC638F0494489BF0DE5ABD8E5F07618C60AFA7504A1E3FA5531AE3C8EDBD7",
+        "qrels.parquet": "413599870545907D2D61EC3576DB6A77DF5162C2FDDE09778FFFB0FCCAB7138E"
+      }
+    }
+  }
+}

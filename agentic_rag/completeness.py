@@ -31,8 +31,8 @@ _DIAGRAM_REFERENCE = re.compile(
     flags=re.IGNORECASE,
 )
 _CLEARLY_NON_MATH = re.compile(
-    r"写.{0,12}(?:诗|作文|小说)|翻译.{0,12}(?:文章|句子)|天气|菜谱|歌词|"
-    r"write.{0,5}(?:poem|story|essay)|translate.{0,8}(?:article|sentence)|weather|recipe",
+    r"写.{0,12}(?:诗|作文|小说|邮件)|翻译.{0,12}(?:文章|句子)|天气|菜谱|歌词|"
+    r"write.{0,8}(?:poem|story|essay|email)|translate.{0,8}(?:article|sentence)|weather|recipe",
     flags=re.IGNORECASE,
 )
 

@@ -1,0 +1,7 @@
+cases:
+  - name: conceptual_followup
+    input: {query: "为什么这一步要移项？", language: zh}
+    expected: {intent: knowledge_query, route: rag}
+  - name: knowledge_question
+    input: {query: "等式的基本性质是什么？", language: zh}
+    expected: {intent: knowledge_query, route: rag}

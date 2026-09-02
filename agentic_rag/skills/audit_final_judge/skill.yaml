@@ -1,0 +1,18 @@
+id: math.audit_final_judge
+version: 1.0.0
+description: "Use an independent Critic model to make a final structured decision for a twice-rejected first-error audit."
+input_schema: agentic_rag.domain.schemas.AnswerRepairInput
+output_schema: agentic_rag.domain.schemas.AnswerEnvelope
+handler: agentic_rag.skills.audit_final_judge.handler.handle
+timeout_ms: 60000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [llm]
+dependencies: [math.answer_critic@1]
+fallback: math.targeted_fallback@1
+policies: [first_error_audit]
+evaluator: audit_final_judge_v1
+expose:
+  langchain: false
+  mcp: false

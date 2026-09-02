@@ -1,0 +1,18 @@
+id: math.attachment_structure
+version: 1.0.0
+description: "Transcribe visible junior-math content and structure the problem and student attempt with confidence."
+input_schema: agentic_rag.domain.schemas.AttachmentStructureInput
+output_schema: agentic_rag.domain.schemas.AttachmentParseOutput
+handler: agentic_rag.skills.attachment_structure.handler.handle
+timeout_ms: 50000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [vision_model]
+dependencies: [math.attachment_extract@1]
+fallback: deterministic_pdf_text
+policies: [junior_math_scope]
+evaluator: attachment_structure_v1
+expose:
+  langchain: true
+  mcp: true

@@ -1,0 +1,18 @@
+id: math.scope_response
+version: 1.0.0
+description: "Return a clear junior-mathematics scope message after Turn Router classification."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.scope_response.handler.handle
+timeout_ms: 250
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: [math.turn_router@1]
+fallback: none
+policies: [junior_math_scope]
+evaluator: scope_response_v1
+expose:
+  langchain: false
+  mcp: false

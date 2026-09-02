@@ -45,9 +45,15 @@ def _all_assignments_equal(answer: str, symbol: str, expected: Fraction) -> bool
 def _check_isosceles(item: GeneratedExercise, answer: str) -> bool:
     base = Fraction(item.parameters["base_angle"])
     first_base, second_base = item.parameters["base_labels"]
-    return _all_assignments_equal(answer, first_base, base) and _all_assignments_equal(
+    if _all_assignments_equal(answer, first_base, base) and _all_assignments_equal(
         answer, second_base, base
+    ):
+        return True
+    shared_base = re.search(
+        rf"(?:两|两个)底角(?:都|均)?(?:等于|为|是)\s*(?P<value>{_NUMBER})\s*(?:°|度)?",
+        answer,
     )
+    return bool(shared_base) and _fraction(shared_base.group("value")) == base
 
 
 def _check_angle_ratio(item: GeneratedExercise, answer: str) -> bool:

@@ -129,31 +129,26 @@ def test_new_question_clears_previous_state(client):
     assert "2x+3=11" not in str(payload["conversation_history"])
 
 
-def test_graph_success_is_normalized_before_returning_from_ask(client, monkeypatch):
-    class Graph:
-        def invoke(self, *_args, **_kwargs):
-            return {
-                "response": "x = 4",
-                "draft_response": "x = 4",
+def test_pipeline_success_is_normalized_before_returning_from_ask(client, monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "_run_curriculum_skill",
+        lambda _request: api.CurriculumSkillRun(
+            response={
                 "response_type": "verified_answer",
-                "trace_id": "graph-trace",
+                "answer": "x = 4",
+                "trace_id": "pipeline-trace",
                 "intent": "solve",
                 "knowledge_points": ["一元一次方程"],
-                "documents": [],
+                "sources": [],
                 "validation_passed": True,
-                "critic_report": {
-                    "is_valid": True,
-                    "validation_mode": "local_sympy",
-                    "deterministic": {"passed": True},
-                    "validated_response_sha256": response_validation_digest("x = 4"),
-                },
                 "conversation_history": [],
                 "conversation_summary": "",
                 "metrics": {"tool_calls": 0},
-            }
-
-    monkeypatch.setattr(api, "_run_curriculum_skill", lambda _request: None)
-    monkeypatch.setattr(api, "get_graph", lambda: Graph())
+            },
+            contract={"validation_evidence": {"kind": "deterministic", "passed": True}},
+        ),
+    )
     monkeypatch.setattr(api, "_graph_executor", ThreadPoolExecutor(max_workers=1))
     monkeypatch.setattr(api.answer_cache, "get", lambda _payload: None)
     monkeypatch.setattr(api.answer_cache, "set", lambda *_args: None)
@@ -240,6 +235,23 @@ def test_health_and_ready_are_minimal_public_statuses(client):
         assert internal not in public_text
 
 
+def test_runtime_exposes_safe_model_capabilities_without_credentials(client):
+    payload = client.get("/runtime").json()
+
+    assert set(payload) == {"model", "retrieval"}
+    assert set(payload["model"]) == {
+        "configured",
+        "provider",
+        "name",
+        "force_every_math_turn",
+    }
+    assert payload["model"]["name"]
+    assert "key" not in str(payload).lower()
+    assert payload["retrieval"]["chunk_count"] > 0
+    assert payload["retrieval"]["dense_enabled"] is True
+    assert payload["retrieval"]["embedding_model"] == "BAAI/bge-m3"
+
+
 def test_public_cache_evidence_cannot_replace_contract_evidence(client, monkeypatch):
     monkeypatch.setattr(
         api.answer_cache,
@@ -297,8 +309,26 @@ def test_normal_skill_route_uses_side_channel_without_public_leakage(client, mon
     response = client.post("/ask", json={"query": "几何", "language": "zh"})
 
     assert response.status_code == 200
-    assert response.json()["response_type"] == "guided_exercise"
-    assert not (INTERNAL_FIELDS & response.json().keys())
+    payload = response.json()
+    assert payload["response_type"] == "guided_exercise"
+    assert payload["metrics"]["model_name"]
+    assert payload["metrics"]["model_provider"]
+    assert payload["metrics"]["llm_required"] is api.FORCE_LLM_EVERY_TURN
+    assert payload["metrics"]["execution_path"] == "exercise_agent"
+    assert not (INTERNAL_FIELDS & payload.keys())
+
+
+def test_problem_solve_runtime_metadata_reports_solve_agent():
+    payload = api._attach_runtime_metadata(
+        {
+            "response_type": "verified_answer",
+            "intent": "problem_solve",
+            "sources": [],
+            "metrics": {"model_attempts": 2, "model_successes": 2},
+        }
+    )
+
+    assert payload["metrics"]["execution_path"] == "solve_agent"
 
 
 def test_skill_contract_context_is_cleared_after_execution():

@@ -9,7 +9,12 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentic_rag.domain.schemas import CriticOutput, CurriculumSolveOutput, ResponseEnvelope
+from agentic_rag.domain.schemas import (
+    CriticOutput,
+    CurriculumSolveOutput,
+    ResponseEnvelope,
+    RetrievalOutput,
+)
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.errors import PipelineError
 from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -46,7 +51,7 @@ class PipelineManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
     version: str
-    sla_ms: int = Field(ge=1, le=30000)
+    sla_ms: int = Field(ge=1, le=300000)
     entry: str
     nodes: dict[str, PipelineNode]
 
@@ -137,6 +142,12 @@ class PipelineExecutor:
                 state[current] = [result.value for result in results if result.status == SkillStatus.OK]
                 if not state[current] and results:
                     state["safe_error"] = results[0].safe_error
+                    state["failure"] = {
+                        "node": current,
+                        "skills": list(node.skills),
+                        "status": results[0].status.value,
+                        "safe_error": results[0].safe_error,
+                    }
             else:
                 ref = node.skill or ""
                 node_payload = self._project_input(ref, state, payload, node.input_from)
@@ -145,12 +156,28 @@ class PipelineExecutor:
                 state["last_result"] = result
                 if result.status != SkillStatus.OK:
                     state["safe_error"] = result.safe_error
+                    state["failure"] = {
+                        "node": current,
+                        "skill": ref,
+                        "status": result.status.value,
+                        "safe_error": result.safe_error,
+                    }
                 if node.on:
-                    key = "pass" if result.status == SkillStatus.OK else "fail"
+                    key = self.branch_key(result.value, result.status)
                     current = node.on.get(key, node.on.get("fail", END))
                     continue
             current = node.next or END
         return state
+
+    @staticmethod
+    def branch_key(value: Any, status: SkillStatus = SkillStatus.OK) -> str:
+        if status != SkillStatus.OK:
+            return "retryable_fail" if status == SkillStatus.RETRYABLE_ERROR else "fail"
+        if isinstance(value, CriticOutput):
+            return "pass" if value.passed else "fail"
+        if isinstance(value, RetrievalOutput):
+            return "pass" if value.candidates else "fail"
+        return "pass"
 
     def _project_input(self, ref: str, state: dict[str, Any], base: dict[str, Any], input_from: str | None) -> dict[str, Any]:
         manifest = self.skills.registry.resolve(ref)
@@ -166,17 +193,85 @@ class PipelineExecutor:
                 dumps = [item.model_dump() for item in value]
                 if all("candidates" in item for item in dumps):
                     merged["rankings"] = [item["candidates"] for item in dumps]
+        latest_response_applied = False
         for value in reversed(list(state.values())):
             if not hasattr(value, "model_dump"):
                 continue
             dump = value.model_dump()
-            if "response" in dump and isinstance(dump["response"], dict) and dump["response"]:
+            if (
+                not latest_response_applied
+                and "response" in dump
+                and isinstance(dump["response"], dict)
+                and dump["response"]
+            ):
                 merged.update(dump["response"])
-            if "candidates" in dump:
+                latest_response_applied = True
+            if "candidates" in dump and "candidates" not in merged:
                 merged["candidates"] = dump["candidates"]
                 merged["contexts"] = dump["candidates"]
-            if "answer" in dump:
+            if "answer" in dump and "answer" not in merged:
                 merged["answer"] = dump["answer"]
+        if "candidates" in merged:
+            merged["contexts"] = merged["candidates"]
+        turn = state.get("turn_router")
+        if turn is not None and hasattr(turn, "routed_query") and not ref.startswith("math.curriculum_solve"):
+            merged["query"] = turn.routed_query
+        if (
+            ref.startswith("math.answer_generate")
+            or ref.startswith("math.curriculum_tutor")
+            or ref.startswith("math.exercise_generate")
+        ) and turn is not None:
+            merged["intent"] = turn.intent
+        if ref.startswith("math.response_render"):
+            for value in reversed(list(state.values())):
+                if not hasattr(value, "candidates"):
+                    continue
+                merged["sources"] = [item.model_dump() for item in value.candidates]
+                break
+            raw_metrics = (
+                merged.get("metrics", {})
+                if isinstance(merged.get("metrics"), dict)
+                else {}
+            )
+            prior_metrics = {
+                key: raw_metrics[key]
+                for key in (
+                    "tool_calls",
+                    "model_attempts",
+                    "model_successes",
+                    "model_failures",
+                    "latency_ms",
+                )
+                if key in raw_metrics
+            }
+            attempts = int(prior_metrics.get("model_attempts") or 0)
+            successes = int(
+                prior_metrics.get("model_successes")
+                or prior_metrics.get("tool_calls")
+                or 0
+            )
+            failures = int(prior_metrics.get("model_failures") or 0)
+            for node_name in (
+                "rerank_filter",
+                "web_search",
+                "answer_generate",
+                "answer_critic",
+                "answer_repair",
+                "answer_repair_critic",
+            ):
+                value = state.get(node_name)
+                if value is None:
+                    continue
+                attempts += int(getattr(value, "model_attempts", 0) or 0)
+                successes += int(getattr(value, "model_successes", 0) or 0)
+                failures += int(getattr(value, "model_failures", 0) or 0)
+            merged["metrics"] = {
+                **prior_metrics,
+                "tool_calls": successes,
+                "model_attempts": attempts,
+                "model_successes": successes,
+                "model_failures": failures,
+            }
         render_contract = self._trusted_render_contract(state) if ref.startswith("math.response_render") else None
         if render_contract is not None:
             merged.update(render_contract)
@@ -194,6 +289,7 @@ class PipelineExecutor:
                     "source": item.get("source", ""),
                     "chapter": item.get("chapter") or item.get("metadata", {}).get("chapter"),
                     "rank": item.get("rank") or item.get("metadata", {}).get("rank"),
+                    "excerpt": str(item.get("content", ""))[:1200] or None,
                 }
                 if isinstance(item, dict)
                 else item

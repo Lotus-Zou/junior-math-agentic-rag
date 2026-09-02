@@ -70,6 +70,9 @@ def _parse_grade(text: str) -> int | None:
     match = re.search(r"([七八九])年级", text)
     if match:
         return chinese[match.group(1)]
+    match = re.search(r"(?:初中\s*)?([789])\s*年级", text)
+    if match:
+        return int(match.group(1))
     match = re.search(r"(?:grade|year)\s*([789])\b|\b([789])(?:th)?\s*grade", text)
     if match:
         return int(match.group(1) or match.group(2))
@@ -77,6 +80,8 @@ def _parse_grade(text: str) -> int | None:
 
 
 def _parse_type(text: str) -> ExerciseType | None:
+    if re.search(r"竞赛|奥数|competition|contest|olympiad", text):
+        return "mixed"
     if re.search(r"证明|proof", text):
         return "proof"
     if re.search(r"应用|application|word problem", text):
@@ -89,7 +94,7 @@ def _parse_type(text: str) -> ExerciseType | None:
 
 
 def _explicit_difficulty(text: str, base: int) -> int | None:
-    if re.search(r"非常难|挑战|very\s+hard|expert", text):
+    if re.search(r"竞赛|奥数|competition|contest|olympiad|非常难|挑战|very\s+hard|expert", text):
         return 5
     if re.search(r"困难|高难|challenging", text):
         return 4
@@ -118,8 +123,16 @@ def parse_practice_preferences(
 ) -> ExerciseRequest:
     text = unicodedata.normalize("NFKC", query or "").strip().lower()
     language = "en" if re.search(r"[a-z]", text) and not re.search(r"[\u4e00-\u9fff]", text) else "zh"
+    competition_request = bool(
+        re.search(r"竞赛|奥数|competition|contest|olympiad", text)
+    )
     explicit_topic = _parse_topic(text)
-    topic = explicit_topic or (current.current_topic if current else None) or "geometry"
+    topic = (
+        explicit_topic
+        or ("algebra" if competition_request else None)
+        or (current.current_topic if current else None)
+        or "geometry"
+    )
     grade = _parse_grade(text) or (current.current_grade if current else None) or 8
     base_difficulty = (current.current_difficulty if current else None) or 2
     difficulty = _explicit_difficulty(text, base_difficulty)

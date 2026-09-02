@@ -7,3 +7,5 @@ traces
 chroma_db
 long_term_memory.sqlite
 .codex-*
+frontend/node_modules
+static

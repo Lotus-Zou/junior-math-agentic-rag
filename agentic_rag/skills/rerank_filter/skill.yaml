@@ -4,7 +4,7 @@ description: "Junior mathematics rerank filter business capability with typed in
 input_schema: agentic_rag.domain.schemas.RerankInput
 output_schema: agentic_rag.domain.schemas.RetrievalOutput
 handler: agentic_rag.skills.rerank_filter.handler.handle
-timeout_ms: 500
+timeout_ms: 45000
 max_attempts: 1
 idempotent: true
 side_effects: []

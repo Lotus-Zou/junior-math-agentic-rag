@@ -1,6 +1,9 @@
 id: math.multimodal
-version: 0.1.0
-sla_ms: 8000
-entry: input_guard
+version: 1.0.0
+sla_ms: 70000
+entry: attachment_extract
 nodes:
-  input_guard: {skill: math.input_guard@1, next: END}
+  attachment_extract:
+    skill: math.attachment_extract@1
+    "on": {pass: attachment_structure, fail: END, retryable_fail: END}
+  attachment_structure: {skill: math.attachment_structure@1, next: END}

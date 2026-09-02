@@ -1,0 +1,4 @@
+cases:
+  - id: empty_retrieval
+    kind: normal
+    expected_status: OK

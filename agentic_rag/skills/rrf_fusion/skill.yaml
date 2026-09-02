@@ -4,7 +4,7 @@ description: "Junior mathematics rrf fusion business capability with typed input
 input_schema: agentic_rag.domain.schemas.FusionInput
 output_schema: agentic_rag.domain.schemas.RetrievalOutput
 handler: agentic_rag.skills.rrf_fusion.handler.handle
-timeout_ms: 250
+timeout_ms: 500
 max_attempts: 1
 idempotent: true
 side_effects: []

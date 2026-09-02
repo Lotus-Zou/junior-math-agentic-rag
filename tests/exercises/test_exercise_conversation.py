@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -9,6 +11,9 @@ from agentic_rag.exercises.generator import AdaptiveExerciseGenerator
 from agentic_rag.exercises.store import ExerciseStore
 from agentic_rag.exercises.templates import generate_from_template
 from app import app
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -234,10 +239,13 @@ def test_api_round_trips_public_exercise_state(monkeypatch, isolated_runtime):
 
 
 def test_frontend_sends_and_clears_only_public_exercise_state():
-    source = open("static/app.js", encoding="utf-8").read()
+    app_source = (ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    store_source = (ROOT / "frontend" / "src" / "store.ts").read_text(encoding="utf-8")
+    types_source = (ROOT / "frontend" / "src" / "types.ts").read_text(encoding="utf-8")
+    source = "\n".join((app_source, store_source, types_source))
 
-    assert "exercise_state: state.exercise" in source
-    assert 'state.exercise = result.exercise_state' in source
-    assert "state.exercise = null" in source
+    assert "exercise_state: active.exercise" in source
+    assert "exercise: response.exercise_state ?? null" in source
+    assert "exercise: null" in source
     for forbidden in ("solution", "answer_signature", "parameters"):
-        assert f"state.exercise.{forbidden}" not in source
+        assert forbidden not in types_source

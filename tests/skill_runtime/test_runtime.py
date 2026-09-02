@@ -6,7 +6,11 @@ import pytest
 from agentic_rag.skill_runtime.contracts import SkillContext, SkillStatus
 from agentic_rag.skill_runtime.errors import ManifestError, PipelineError
 from agentic_rag.skill_runtime.executor import SkillExecutor
-from agentic_rag.skill_runtime.pipeline import PipelineExecutor, PipelineLoader
+from agentic_rag.skill_runtime.pipeline import (
+    PipelineExecutor,
+    PipelineLoader,
+    PipelineManifest,
+)
 from agentic_rag.skill_runtime.manifest import SkillManifest
 from agentic_rag.skill_runtime.registry import SkillRegistry, get_default_registry
 
@@ -19,8 +23,18 @@ def context():
 
 def test_registry_discovers_versioned_skills():
     registry = get_default_registry()
-    assert len(registry.list()) == 17
+    assert len(registry.list()) == 31
     assert registry.resolve("math.input_guard@1").version == "1.0.0"
+    assert registry.resolve("math.attachment_extract@1").version == "1.0.0"
+    assert registry.resolve("math.attachment_structure@1").version == "1.0.0"
+    assert registry.resolve("math.exercise_generate@1").version == "1.0.0"
+    assert registry.resolve("assistant.utility_tool@1").version == "1.0.0"
+    assert registry.resolve("assistant.general_agent@1").version == "1.0.0"
+    assert registry.resolve("math.answer_repair@1").version == "1.0.0"
+    assert registry.resolve("math.targeted_fallback@1").version == "1.0.0"
+    assert registry.resolve("web.tavily_search@1").version == "1.0.0"
+    assert registry.resolve("math.no_evidence_response@1").version == "1.0.0"
+    assert registry.resolve("math.answer_final_judge@1").version == "1.0.0"
 
 
 def test_registry_rejects_duplicate_version():
@@ -89,9 +103,44 @@ def test_pipeline_rejects_unbounded_cycle(tmp_path):
         PipelineLoader(get_default_registry()).load(path)
 
 
+def test_skill_timeout_contract_allows_bounded_multimodal_budget():
+    manifest = get_default_registry().resolve("math.attachment_structure@1")
+    assert manifest.timeout_ms == 50000
+    assert manifest.timeout_ms < 70000
+
+
 def test_correction_pipeline_executes_deterministic_path():
     registry = get_default_registry()
     pipeline = PipelineLoader(registry).load(ROOT / "agentic_rag" / "pipelines" / "correction.yaml")
     state = PipelineExecutor(SkillExecutor(registry)).run(pipeline, {"query": "解方程 2x+3=11", "language": "zh"}, context())
     assert state["curriculum_solve"].handled
     assert "x = 4" in state["response_render"].answer
+
+
+def test_pipeline_records_the_failed_node_and_skill():
+    registry = SkillRegistry()
+    registry.register(SkillManifest(
+        id="math.slow", version="1.0.0", description="Test-only bounded slow skill.",
+        input_schema="agentic_rag.domain.schemas.QueryInput",
+        output_schema="agentic_rag.domain.schemas.QueryInput",
+        handler="tests.skill_runtime.fixtures.slow_handler",
+        timeout_ms=5,
+    ))
+    pipeline = PipelineManifest.model_validate({
+        "id": "math.failure-observability",
+        "version": "1.0.0",
+        "sla_ms": 1000,
+        "entry": "slow",
+        "nodes": {"slow": {"skill": "math.slow@1", "next": "END"}},
+    })
+
+    state = PipelineExecutor(SkillExecutor(registry)).run(
+        pipeline, {"query": "x=1"}, context()
+    )
+
+    assert state["failure"] == {
+        "node": "slow",
+        "skill": "math.slow@1",
+        "status": "RETRYABLE_ERROR",
+        "safe_error": "处理超时，请稍后重试。",
+    }

@@ -4,11 +4,11 @@ description: "Junior mathematics answer critic business capability with typed in
 input_schema: agentic_rag.domain.schemas.AnswerCriticInput
 output_schema: agentic_rag.domain.schemas.CriticOutput
 handler: agentic_rag.skills.answer_critic.handler.handle
-timeout_ms: 1000
+timeout_ms: 45000
 max_attempts: 1
 idempotent: true
 side_effects: []
-required_capabilities: []
+required_capabilities: [llm]
 dependencies: []
 policies: [junior_math_scope]
 evaluator: answer_critic_v1

@@ -1,0 +1,443 @@
+{
+  "schema_version": "1.0",
+  "case_id": "AGENTIRAG-RESUME-001",
+  "sources": [
+    {
+      "source_id": "S-001",
+      "source_type": "other",
+      "title": "用户提供的项目经历草稿",
+      "locator": "当前对话",
+      "provided_by": "user",
+      "reliability": "candidate_self_statement",
+      "contains_private_data": false,
+      "notes": "包含项目时间、历史指标和导师采纳表述。"
+    },
+    {
+      "source_id": "S-002",
+      "source_type": "repository",
+      "title": "AgentiRAG 当前工作区",
+      "locator": "codex/accuracy-first-refactor",
+      "provided_by": "user",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "用于核验代码、测试和评测脚手架。"
+    },
+    {
+      "source_id": "S-003",
+      "source_type": "metric_dashboard",
+      "title": "当前本地测试与 bad-case 运行结果",
+      "locator": "2026-08-28 本地运行",
+      "provided_by": "system",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "1004 个 pytest 用例；1000 条 bad-case 数据全部处理；6 个 chaos case 全部通过。"
+    },
+    {
+      "source_id": "S-004",
+      "source_type": "project_document",
+      "title": "历史评测口径",
+      "locator": "evaluation/benchmark_history.json",
+      "provided_by": "user",
+      "reliability": "candidate_self_statement",
+      "contains_private_data": false,
+      "notes": "文件明确标记 verified_in_current_workspace_run=false。"
+    },
+    {
+      "source_id": "S-005",
+      "source_type": "metric_dashboard",
+      "title": "2026-08-28 生产链路公开评测 smoke",
+      "locator": "evaluation/reports/public_benchmarks、evaluation/latest_summary.json",
+      "provided_by": "system",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "C-Eval/GSM8K 各 2 条；仅证明公开题集评测链路和当前小样本结果。"
+    },
+    {
+      "source_id": "S-006",
+      "source_type": "metric_dashboard",
+      "title": "2026-08-29 RAGAS 专项与 sampled MTEB 评测",
+      "locator": "evaluation/reports/ragas-rag-5-taxonomy-fix-v2_e2e.csv、evaluation/reports/mteb/sampled-20260829/summary.json",
+      "provided_by": "system",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "RAGAS 5 条专项集；MTEB 每任务 50 query/512 corpus 的固定采样 smoke，均非官方全量榜单成绩。"
+    },
+    {
+      "source_id": "S-007",
+      "source_type": "metric_dashboard",
+      "title": "2026-09-02 公开题集、官方检索任务与人工错因标注正式评测",
+      "locator": "evaluation/reports/formal-evaluation-20260902.json",
+      "provided_by": "system",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "区分 C-Eval 公开 val、GSM8K 官方 test、SciFact/CovidRetrieval 官方完整任务、PRM800K 300 条人工标签子集及其空上下文 RAGAS。"
+    },
+    {
+      "source_id": "S-008",
+      "source_type": "metric_dashboard",
+      "title": "2026-09-02 完整 pytest 回归",
+      "locator": "python -m pytest -q",
+      "provided_by": "system",
+      "reliability": "system_record",
+      "contains_private_data": false,
+      "notes": "收集并通过 1039 个测试；0 failed；1 条 langchain-community 上游弃用警告。"
+    }
+  ],
+  "experiences": [
+    {
+      "experience_id": "EXP-001",
+      "experience_type": "project",
+      "organization": "",
+      "team": "",
+      "role": "独立开发",
+      "start_date": "2025-06",
+      "end_date": "2025-10",
+      "status": "unknown",
+      "source_ids": ["S-001", "S-002"]
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "C-001",
+      "experience_id": "EXP-001",
+      "claim_type": "responsibility",
+      "raw_claim": "独立实现面向初中数学错题订正的 Agentic RAG",
+      "normalized_claim": "独立开发初中数学错题订正 Agentic RAG 系统",
+      "action": "设计并实现系统",
+      "methods": ["Agentic RAG"],
+      "business_object": "初中数学错题订正",
+      "deliverables": ["FastAPI 服务", "React 前端", "Agent 工作流"],
+      "result": "",
+      "role_scope": "project_owner",
+      "tense": "delivered",
+      "verification": "user_attested",
+      "source_refs": [
+        {"source_id": "S-001", "support_type": "supports", "locator": "项目标题与系统架构", "excerpt": "初中数学错题智能问答系统 · 独立开发"},
+        {"source_id": "S-002", "support_type": "supports", "locator": "README.md、app.py、frontend/", "excerpt": "存在可运行前后端与完整业务实现"}
+      ],
+      "risk_flags": [],
+      "notes": ""
+    },
+    {
+      "claim_id": "C-002",
+      "experience_id": "EXP-001",
+      "claim_type": "method",
+      "raw_claim": "基于 LangGraph StateGraph 编排 Query Routing、Rewrite、Retrieval、Generation 与 Grading",
+      "normalized_claim": "以 LangGraph StateGraph 承载版本化 Skill Pipeline，并显式管理路由、检索、生成和校验分支",
+      "action": "实现状态编排",
+      "methods": ["LangGraph StateGraph", "YAML Pipeline", "Turn Router"],
+      "business_object": "问答工作流",
+      "deliverables": ["LangGraph Pipeline Adapter", "correction.yaml"],
+      "result": "生产 API 通过编译后的 StateGraph 执行统一 Skill Pipeline",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/graph.py、app.py", "excerpt": "build_skill_pipeline_graph().invoke(...) 进入生产请求"}
+      ],
+      "risk_flags": [],
+      "notes": "不应写成每个 Skill 都是独立 StateGraph 节点；当前 Adapter 将版本化 Pipeline 封装进 StateGraph。"
+    },
+    {
+      "claim_id": "C-003",
+      "experience_id": "EXP-001",
+      "claim_type": "method",
+      "raw_claim": "BGE-M3 Dense + BM25 + GraphRAG → RRF 融合与 LLM-Rerank",
+      "normalized_claim": "实现 BGE-M3 Dense、BM25 与轻量知识图谱多路召回，经 RRF 融合和 LLM-Rerank 过滤",
+      "action": "搭建混合检索链路",
+      "methods": ["BGE-M3", "BM25", "GraphRAG", "RRF", "LLM-Rerank"],
+      "business_object": "初中数学教材与知识点检索",
+      "deliverables": ["多路索引", "检索 Skill", "重排 Skill"],
+      "result": "生产运行时已启用 Dense 检索并返回带来源片段",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/math_retriever.py、skills/retrieval_*、skills/rrf_fusion、skills/rerank_filter", "excerpt": "存在三路召回、RRF 和重排实现"}
+      ],
+      "risk_flags": [],
+      "notes": ""
+    },
+    {
+      "claim_id": "C-004",
+      "experience_id": "EXP-001",
+      "claim_type": "method",
+      "raw_claim": "Critic 结合教材依据与 SymPy 确定性校验",
+      "normalized_claim": "使用独立 Critic 检查教材忠实度，并以 SymPy 和规则校验数学推导",
+      "action": "构建答案校验闭环",
+      "methods": ["Independent Critic", "SymPy", "引用校验"],
+      "business_object": "数学答案质量",
+      "deliverables": ["Critic Skill", "Answer Repair 分支"],
+      "result": "校验结果控制通过、修复或定向追问分支",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/math_validation.py、skills/answer_critic、pipelines/correction.yaml", "excerpt": "存在 SymPy 校验与 Critic 条件分支"}
+      ],
+      "risk_flags": [],
+      "notes": ""
+    },
+    {
+      "claim_id": "C-005",
+      "experience_id": "EXP-001",
+      "claim_type": "deliverable",
+      "raw_claim": "封装 Pydantic Skill Runtime，统一白名单、超时重试、Trace 与 LangGraph/MCP 适配",
+      "normalized_claim": "构建 Pydantic Skill Runtime，统一 Schema、权限策略、有界重试、超时、Trace 及 LangGraph/MCP 适配",
+      "action": "实现统一 Skill 执行边界",
+      "methods": ["Pydantic", "Policy", "LangGraph Adapter", "MCP Adapter"],
+      "business_object": "Agent 运行治理",
+      "deliverables": ["Skill Registry", "Skill Executor", "Adapter Contracts"],
+      "result": "Workflow、Tool 与 MCP 复用同一业务 Skill 定义",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/skill_runtime、mcp_server.py", "excerpt": "Executor 统一校验、策略、重试、超时和 telemetry"}
+      ],
+      "risk_flags": [],
+      "notes": ""
+    },
+    {
+      "claim_id": "C-006",
+      "experience_id": "EXP-001",
+      "claim_type": "deliverable",
+      "raw_claim": "实现三级记忆、JSONL Trace、bad-case 登记与 Redis→进程内 TTL 降级",
+      "normalized_claim": "实现工作/会话/长期记忆、JSONL Trace、bad-case 登记，以及 Redis 到进程内 TTL 缓存降级",
+      "action": "实现状态、追踪与缓存基础设施",
+      "methods": ["Conversation Memory", "SQLite/Vector Memory", "JSONL Trace", "Redis", "TTL Cache"],
+      "business_object": "多轮教学状态与运行可靠性",
+      "deliverables": ["记忆模块", "Trace 文件", "缓存层"],
+      "result": "支持会话连续性、问题复现和缓存故障降级",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/memory.py、agentic_rag/tracing.py、agentic_rag/cache.py", "excerpt": "存在长期记忆、JSONL 持久化和 Redis fallback"}
+      ],
+      "risk_flags": [],
+      "notes": ""
+    },
+    {
+      "claim_id": "C-007",
+      "experience_id": "EXP-001",
+      "claim_type": "deliverable",
+      "raw_claim": "构建 1000 条分层评测集",
+      "normalized_claim": "构建 1000 条模板化分层评测集，并接入 RAGAS 与业务质量门禁",
+      "action": "搭建离线评测脚手架",
+      "methods": ["RAGAS", "A/B Eval", "Bad-case Harness"],
+      "business_object": "RAG 与 Agent 回归质量",
+      "deliverables": ["math_benchmark_1000.csv", "evaluation.py", "bad_case_harness.py"],
+      "result": "当前 bad-case harness 可处理全部 1000 条 case",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "evaluation/", "excerpt": "包含 1000 条分层数据、RAGAS 调用与质量门禁"},
+        {"source_id": "S-003", "support_type": "supports", "locator": "bad_case_harness 运行结果", "excerpt": "dataset_size=1000, handled=1000"}
+      ],
+      "risk_flags": ["other"],
+      "notes": "DATA-001 标记该数据由模板扩展，不能写成权威真实学生数据集。"
+    },
+    {
+      "claim_id": "C-008",
+      "experience_id": "EXP-001",
+      "claim_type": "metric_result",
+      "raw_claim": "仓库本地 49 项测试通过",
+      "normalized_claim": "当前仓库本地收集并通过 1039 个自动化测试",
+      "action": "运行单元、契约、集成、故障注入与 UI 回归测试",
+      "methods": ["pytest", "Playwright"],
+      "business_object": "当前仓库质量",
+      "deliverables": ["测试套件"],
+      "result": "1039 个 pytest 用例通过",
+      "role_scope": "module_owner",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-008", "support_type": "supports", "locator": "2026-09-02 pytest 本地运行", "excerpt": "collected_tests=1039；passed=1039；failed=0"}
+      ],
+      "metric": {
+        "name": "自动化测试数",
+        "baseline": null,
+        "result": 1039,
+        "unit": "case",
+        "absolute_change": null,
+        "relative_change": null,
+        "numerator": 1039,
+        "denominator": 1039,
+        "window": "2026-09-02",
+        "measurement_system": "pytest --collect-only 与完整测试运行",
+        "attribution_scope": "personal_result"
+      },
+      "risk_flags": ["missing_baseline", "conflicting_dates"],
+      "notes": "当前测试数发生在项目标注结束日期之后；若简历坚持 2025.10 结束，不应使用该数字。"
+    },
+    {
+      "claim_id": "C-009",
+      "experience_id": "EXP-001",
+      "claim_type": "metric_result",
+      "raw_claim": "Answer Relevance 由 0.50 提升至 0.78",
+      "normalized_claim": "历史自建评测中 Answer Relevance 从 0.50 提升至 0.78",
+      "action": "优化检索、Prompt 与校验链路",
+      "methods": ["RAGAS Answer Relevance"],
+      "business_object": "历史自建评测集",
+      "deliverables": ["历史评测结果"],
+      "result": "Answer Relevance 0.50→0.78",
+      "role_scope": "project_owner",
+      "tense": "tested",
+      "verification": "user_attested",
+      "source_refs": [
+        {"source_id": "S-001", "support_type": "supports", "locator": "记忆与评测 bullet", "excerpt": "Answer Relevance 由 0.50 提升至 0.78"},
+        {"source_id": "S-004", "support_type": "partially_supports", "locator": "metrics.answer_relevance_*", "excerpt": "verified_in_current_workspace_run=false"}
+      ],
+      "metric": {
+        "name": "Answer Relevance",
+        "baseline": 0.5,
+        "result": 0.78,
+        "unit": "score",
+        "absolute_change": 0.28,
+        "relative_change": 56.0,
+        "numerator": null,
+        "denominator": 1000,
+        "window": "2025",
+        "measurement_system": "历史自建评测，当前工作区未复测",
+        "attribution_scope": "unknown"
+      },
+      "risk_flags": ["missing_measurement_method", "causality_not_established"],
+      "notes": "只有能说明 Judge 模型、RAGAS 版本、Prompt、样本切分和对比版本时才建议保留。"
+    },
+    {
+      "claim_id": "C-010",
+      "experience_id": "EXP-001",
+      "claim_type": "qualitative_result",
+      "raw_claim": "优化方案经组内分享后获导师采纳",
+      "normalized_claim": "方案经组内分享后被导师采纳",
+      "action": "分享优化方案",
+      "methods": ["组内技术分享"],
+      "business_object": "教育合作项目",
+      "deliverables": ["方案分享"],
+      "result": "导师采纳",
+      "role_scope": "project_owner",
+      "tense": "delivered",
+      "verification": "user_attested",
+      "source_refs": [
+        {"source_id": "S-001", "support_type": "supports", "locator": "记忆与评测 bullet", "excerpt": "优化方案经组内分享后获导师采纳"}
+      ],
+      "risk_flags": ["missing_source"],
+      "notes": "仓库无法核验；需准备会议记录、采用模块或导师确认等面试证据。"
+    },
+    {
+      "claim_id": "C-011",
+      "experience_id": "EXP-001",
+      "claim_type": "method",
+      "raw_claim": "本地知识库无结果时回退 Tavily Web Search",
+      "normalized_claim": "Tavily Web Search 生产回退",
+      "action": "实现 Web Search 回退",
+      "methods": ["Tavily"],
+      "business_object": "空召回处理",
+      "deliverables": ["Tavily Search Skill", "MCP Tool", "空召回条件分支"],
+      "result": "本地空召回时进入 Tavily；真实联网探测返回 3 条 HTTPS 来源",
+      "role_scope": "module_owner",
+      "tense": "delivered",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-002", "support_type": "supports", "locator": "agentic_rag/skills/tavily_search、pipelines/correction.yaml", "excerpt": "存在生产 Skill、空召回分支、MCP 暴露与安全过滤"},
+        {"source_id": "S-005", "support_type": "supports", "locator": "2026-08-28 live probe", "excerpt": "mode=live, returned=3"}
+      ],
+      "risk_flags": ["conflicting_dates"],
+      "notes": "真实联网验证发生在 2026-08-28；若简历项目结束时间仍写 2025.10，不应把这次验证日期混入 2025 成果。"
+    },
+    {
+      "claim_id": "C-012",
+      "experience_id": "EXP-001",
+      "claim_type": "metric_result",
+      "raw_claim": "当前工作区 RAGAS Answer Relevance 评测",
+      "normalized_claim": "5 条初中数学知识问答专项集上 Answer Relevance 为 0.9378",
+      "action": "修复知识点分类召回、知识库候选池与 Judge 稳定性",
+      "methods": ["RAGAS", "Agentic RAG", "RRF"],
+      "business_object": "当前数学知识问答专项回归",
+      "deliverables": ["逐题 E2E 报告", "RAGAS 原始评分"],
+      "result": "Answer Relevance 0.9378，Faithfulness 0.9260，Context Recall 1.0",
+      "role_scope": "project_owner",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-006", "support_type": "supports", "locator": "ragas-rag-5-taxonomy-fix-v2_e2e.csv", "excerpt": "evaluated=5, answer_relevance=0.937849, faithfulness=0.925962"}
+      ],
+      "metric": {
+        "name": "Answer Relevance",
+        "baseline": null,
+        "result": 0.9378491189956717,
+        "unit": "score",
+        "absolute_change": null,
+        "relative_change": null,
+        "numerator": null,
+        "denominator": 5,
+        "window": "2026-08-29",
+        "measurement_system": "RAGAS 0.4，5 条 math knowledge 专项集，生产 LangGraph E2E",
+        "attribution_scope": "current_workspace"
+      },
+      "risk_flags": ["small_sample", "conflicting_dates"],
+      "notes": "只能表述为 5 条专项回归结果，不能写成 1000 条评测集或 2025 历史指标。"
+    },
+    {
+      "claim_id": "C-013",
+      "experience_id": "EXP-001",
+      "claim_type": "metric_result",
+      "raw_claim": "当前工作区已运行权威公开题集与人工步骤标签评测",
+      "normalized_claim": "完成 C-Eval 公开中学数学 val、GSM8K 官方 test、SciFact/CovidRetrieval 官方完整任务及 PRM800K 300 条人工标签子集评测",
+      "action": "运行并审计公开全量与人工标注评测",
+      "methods": ["C-Eval", "GSM8K", "MTEB", "BEIR", "PRM800K", "RAGAS"],
+      "business_object": "当前仓库绝对质量与失败模式",
+      "deliverables": ["逐题 checkpoint", "官方任务原始结果", "机器可读汇总", "bad cases"],
+      "result": "C-Eval val 19/19；GSM8K 80.59%（含 238 条空预测）；SciFact NDCG@10 0.64150；CovidRetrieval NDCG@10 0.76522；PRM800K 300 条首错 exact 69.33%、within-one 81.00%",
+      "role_scope": "project_owner",
+      "tense": "tested",
+      "verification": "source_grounded",
+      "source_refs": [
+        {"source_id": "S-007", "support_type": "supports", "locator": "formal-evaluation-20260902.json", "excerpt": "All result scopes, report paths, revisions, sample sizes, and limitations are recorded separately."}
+      ],
+      "risk_flags": ["conflicting_dates", "dataset_scope_mismatch"],
+      "notes": "这些是 2026-09-02 当前工作区结果，不得倒填为 2025 项目结果。C-Eval 是公开 val 而非隐藏 test；PRM800K 不是中文初中错因分类集；PRM RAGAS contexts 为空。"
+    }
+  ],
+  "conflicts": [
+    {
+      "conflict_id": "CON-001",
+      "claim_ids": ["C-001", "C-008"],
+      "conflict_type": "date_conflict",
+      "description": "项目标注 2025.10 结束，但 1039 个测试及正式公开评测是 2026 年当前仓库结果。",
+      "status": "unresolved",
+      "resolution": null
+    }
+  ],
+  "evidence_gaps": [
+    {
+      "gap_id": "GAP-001",
+      "claim_id": "C-009",
+      "missing_fields": ["metric.measurement_method", "metric.attribution_scope"],
+      "impact": "无法复现 Answer Relevance 0.50→0.78，也无法判断提升由哪项优化造成。",
+      "recommended_question": "2025 年评测使用哪个 Judge 模型、RAGAS 版本、Prompt、样本切分和对比版本？",
+      "priority": "high",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-002",
+      "claim_id": "C-010",
+      "missing_fields": ["adoption_scope", "evidence"],
+      "impact": "无法说明导师具体采纳了什么，以及是否真正用于合作项目。",
+      "recommended_question": "导师采纳的是哪一项方案，落到了哪个模块，有没有会议记录、提交记录或确认材料？",
+      "priority": "high",
+      "status": "open"
+    },
+    {
+      "gap_id": "GAP-003",
+      "claim_id": "C-008",
+      "missing_fields": ["timeline_alignment"],
+      "impact": "当前测试数量不能直接归入 2025.06-2025.10 的已完成项目。",
+      "recommended_question": "项目是否在 2025.10 后持续维护；若是，简历时间是否改为 2025.06-至今？",
+      "priority": "high",
+      "status": "open"
+    }
+  ]
+}

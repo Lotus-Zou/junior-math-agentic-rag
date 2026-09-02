@@ -182,8 +182,10 @@ AgentHistoryList.json
 # For Sharing (.pem files)
 .gradio/
 
-# For Docker
-data/
+# Public curriculum sources are versioned; private uploads remain ignored.
+data/*
+!data/初中数学核心知识.md
+!data/knowledge_graph.json
 
 chroma_db/
 
@@ -200,3 +202,15 @@ traces/
 evaluation/reports/
 evaluation/latest_summary.json
 evaluation/pending_labels.jsonl
+evaluation/datasets/
+evaluation/skill_review/
+evaluation/public_benchmark_bad_cases.jsonl
+
+# Local runtime state
+long_term_memory.sqlite*
+
+# Frontend dependencies and TypeScript build metadata
+frontend/node_modules/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts

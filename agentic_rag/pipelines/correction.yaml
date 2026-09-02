@@ -1,24 +1,56 @@
 id: math.correction
 version: 1.0.0
-sla_ms: 8000
-entry: input_guard
+sla_ms: 240000
+entry: turn_router
 nodes:
-  input_guard: {skill: math.input_guard@1, next: question_parse}
-  question_parse: {skill: math.question_parse@1, next: knowledge_classify}
-  knowledge_classify: {skill: math.knowledge_classify@1, next: curriculum_solve}
-  curriculum_solve: {skill: math.curriculum_solve@1, next: route}
-  route:
+  turn_router: {skill: math.turn_router@1, next: input_guard}
+  input_guard: {skill: math.input_guard@1, next: turn_route}
+  turn_route:
     type: router
-    branches: {deterministic: response_render, rag: query_rewrite, clarify: response_render}
-  query_rewrite: {skill: math.query_rewrite@1, next: retrieval_parallel}
+    branches: {deterministic: curriculum_solve, exercise_agent: exercise_generate, rag: question_parse, solve_agent: answer_generate, audit_agent: answer_generate, scope_response: scope_response, utility_tool: utility_tool, general_agent: general_agent}
+  utility_tool: {skill: assistant.utility_tool@1, next: response_render}
+  general_agent: {skill: assistant.general_agent@1, next: response_render}
+  scope_response: {skill: math.scope_response@1, next: response_render}
+  exercise_generate: {skill: math.exercise_generate@1, next: response_render}
+  curriculum_solve: {skill: math.curriculum_solve@1, next: curriculum_route}
+  curriculum_route:
+    type: router
+    branches: {deterministic: curriculum_tutor, solve_agent: answer_generate}
+  curriculum_tutor: {skill: math.curriculum_tutor@1, next: response_render}
+  question_parse: {skill: math.question_parse@1, next: query_rewrite}
+  query_rewrite: {skill: math.query_rewrite@1, next: knowledge_classify}
+  knowledge_classify: {skill: math.knowledge_classify@1, next: retrieval_parallel}
   retrieval_parallel:
     type: parallel
     skills: [math.retrieve_dense@1, math.retrieve_bm25@1, math.retrieve_graph@1]
     next: rrf_fusion
   rrf_fusion: {skill: math.rrf_fusion@1, next: rerank_filter}
-  rerank_filter: {skill: math.rerank_filter@1, next: answer_generate}
+  rerank_filter:
+    skill: math.rerank_filter@1
+    "on": {pass: answer_generate, fail: web_search}
+  web_search:
+    skill: web.tavily_search@1
+    "on": {pass: answer_generate, fail: no_evidence_route}
+  no_evidence_route:
+    type: router
+    branches: {problem_solve: answer_generate, multiple_choice: answer_generate, error_analysis: answer_generate, knowledge_query: answer_generate, conceptual_followup: answer_generate, default: no_evidence_response}
+  no_evidence_response: {skill: math.no_evidence_response@1, next: response_render}
   answer_generate: {skill: math.answer_generate@1, next: answer_critic}
   answer_critic:
     skill: math.answer_critic@1
-    "on": {pass: response_render, fail: response_render}
+    "on": {pass: response_render, fail: answer_repair}
+  answer_repair: {skill: math.answer_repair@1, next: answer_repair_critic}
+  answer_repair_critic:
+    skill: math.answer_critic@1
+    "on": {pass: response_render, fail: audit_failure_route}
+  audit_failure_route:
+    type: router
+    branches: {error_analysis: audit_final_judge, problem_solve: answer_final_judge, multiple_choice: answer_final_judge, default: targeted_fallback}
+  audit_final_judge:
+    skill: math.audit_final_judge@1
+    "on": {pass: response_render, fail: targeted_fallback}
+  answer_final_judge:
+    skill: math.answer_final_judge@1
+    "on": {pass: response_render, fail: targeted_fallback}
+  targeted_fallback: {skill: math.targeted_fallback@1, next: response_render}
   response_render: {skill: math.response_render@1, next: END}

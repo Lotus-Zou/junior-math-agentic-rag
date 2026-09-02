@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from typing import Any, Literal
 import uuid
 
@@ -78,7 +79,19 @@ def _canonical_sha256(value: Any) -> str:
 
 def public_response_digest(public_response: dict[str, Any]) -> str:
     """Hash a public response using stable canonical JSON serialization."""
-    return _canonical_sha256(public_response)
+    signed = dict(public_response)
+    metrics = signed.get("metrics")
+    if isinstance(metrics, dict):
+        signed_metrics = dict(metrics)
+        for field in (
+            "model_provider",
+            "model_name",
+            "llm_required",
+            "execution_path",
+        ):
+            signed_metrics.pop(field, None)
+        signed["metrics"] = signed_metrics
+    return _canonical_sha256(signed)
 
 
 def exercise_public_fingerprint(
@@ -220,6 +233,7 @@ ResponseType = Literal[
     "guided_exercise",
     "clarification_required",
     "supported_refusal",
+    "general_answer",
 ]
 
 
@@ -235,10 +249,24 @@ def _project_sources(value: Any) -> list[dict[str, Any]]:
         return []
     if not isinstance(value, list):
         raise ValueError("sources must be a list")
-    return [
-        _project_model(PublicSource, item, ("chunk_id", "source", "chapter", "rank"))
+    projected = [
+        _project_model(
+            PublicSource,
+            item,
+            ("chunk_id", "source", "chapter", "rank", "excerpt"),
+        )
         for item in value
     ]
+    for item in projected:
+        source = str(item.get("source", ""))
+        path = Path(source)
+        if path.is_absolute():
+            item["source"] = (
+                f"data/{path.name}"
+                if path.parent.name.lower() == "data"
+                else path.name
+            )
+    return projected
 
 
 def _project_turns(value: Any) -> list[dict[str, Any]]:
@@ -259,7 +287,7 @@ def normalize_response(
     private_exercise: ValidatedExerciseState | None = None,
 ) -> dict[str, Any]:
     """Project producer state onto the public contract and enforce validation gates."""
-    allowed = {"verified_answer", "guided_exercise", "clarification_required", "supported_refusal"}
+    allowed = {"verified_answer", "guided_exercise", "clarification_required", "supported_refusal", "general_answer"}
     if response_type not in allowed:
         raise ValueError(f"unsupported response type: {response_type}")
 
@@ -328,7 +356,19 @@ def normalize_response(
     metrics = payload.get("metrics")
     if isinstance(metrics, dict):
         public_metrics = {
-            key: metrics[key] for key in ("tool_calls", "latency_ms") if key in metrics
+            key: metrics[key]
+            for key in (
+                "tool_calls",
+                "model_attempts",
+                "model_successes",
+                "model_failures",
+                "latency_ms",
+                "model_provider",
+                "model_name",
+                "llm_required",
+                "execution_path",
+            )
+            if key in metrics
         }
         result["metrics"] = PublicMetrics.model_validate(public_metrics).model_dump(
             mode="json", exclude_unset=True

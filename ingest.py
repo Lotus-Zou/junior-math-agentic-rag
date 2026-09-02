@@ -21,9 +21,9 @@ from agentic_rag.chains import get_embedding_function
 from agentic_rag.knowledge_graph import math_knowledge_graph
 from agentic_rag.math_retriever import CHUNK_COLLECTION_NAME
 from agentic_rag.math_taxonomy import adaptive_chunk_size, classify_math_text, extract_formulas, infer_prerequisites
-from config import CHROMA_PATH, EXCEL_METADATA_COLUMNS
+from config import CHROMA_PATH, EXCEL_METADATA_COLUMNS, KNOWLEDGE_DATA_PATH
 
-DATA_PATH = "data"
+DATA_PATH = KNOWLEDGE_DATA_PATH
 SUMMARY_COLLECTION_NAME = "math_summaries"
 BATCH_SIZE = 512
 

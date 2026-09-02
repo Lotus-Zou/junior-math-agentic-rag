@@ -233,6 +233,51 @@ def _render_difference(p: dict[str, Any], language: str) -> RenderedExercise:
     )
 
 
+def _sample_consecutive_squares(
+    rng: random.Random, difficulty: int
+) -> dict[str, Any]:
+    upper = 1200 if difficulty == 5 else 400
+    first = rng.randint(3, upper)
+    numbers = [first, first + 1, first + 2]
+    return {
+        "first": first,
+        "numbers": numbers,
+        "square_sum": sum(value * value for value in numbers),
+    }
+
+
+def _render_consecutive_squares(
+    p: dict[str, Any], language: str
+) -> RenderedExercise:
+    first = p["first"]
+    numbers = p["numbers"]
+    square_sum = p["square_sum"]
+    signature = f"numbers={','.join(map(str, numbers))}"
+    if language == "en":
+        return RenderedExercise(
+            f"The sum of the squares of three consecutive positive integers is {square_sum}. Find the three integers.",
+            "Let the smallest integer be n, form a quadratic equation, and use the positive-integer condition.",
+            (
+                f"Let the integers be n, n+1, n+2. Then "
+                f"n²+(n+1)²+(n+2)²={square_sum}, so "
+                f"3n²+6n+5={square_sum}. The positive integer root is "
+                f"n={first}; hence the integers are {numbers[0]}, {numbers[1]}, {numbers[2]}."
+            ),
+            signature,
+        )
+    return RenderedExercise(
+        f"三个连续正整数的平方和为 {square_sum}，求这三个正整数。",
+        "设最小的正整数为 n，列出一元二次方程，再结合正整数条件筛选根。",
+        (
+            f"设三个数为 n、n+1、n+2，则 "
+            f"n²+(n+1)²+(n+2)²={square_sum}，整理得 "
+            f"3n²+6n+5={square_sum}。取符合题意的正整数根 n={first}，"
+            f"所以三个数依次为 {numbers[0]}、{numbers[1]}、{numbers[2]}。"
+        ),
+        signature,
+    )
+
+
 def _sample_slope_intercept(rng: random.Random, difficulty: int) -> dict[str, Any]:
     slopes = [value for value in range(-12, 13) if value != 0]
     if difficulty == 1:
@@ -314,6 +359,7 @@ TEMPLATE_REGISTRY: dict[str, TemplateDefinition] = {
         TemplateDefinition("geo.congruence.sas_proof.v1", "geometry", (8,), (3, 4), "proof", ("全等三角形", "边角边"), _sample_sas, _render_sas),
         TemplateDefinition("alg.linear_equation.v1", "algebra", (7,), (1, 2, 3), "calculation", ("一元一次方程", "等式性质"), _sample_linear_equation, _render_linear_equation),
         TemplateDefinition("alg.factorization.difference.v1", "algebra", (8,), (2, 3), "calculation", ("因式分解", "平方差公式"), _sample_difference, _render_difference),
+        TemplateDefinition("alg.consecutive_squares.v1", "algebra", (9,), (4, 5), "mixed", ("一元二次方程", "整数问题"), _sample_consecutive_squares, _render_consecutive_squares),
         TemplateDefinition("fn.slope_intercept.v1", "linear_function", (8,), (1, 2), "calculation", ("一次函数", "斜率与截距"), _sample_slope_intercept, _render_slope_intercept),
         TemplateDefinition("fn.two_points.v1", "linear_function", (8, 9), (2, 3, 4), "application", ("一次函数", "待定系数法"), _sample_two_points, _render_two_points),
     )

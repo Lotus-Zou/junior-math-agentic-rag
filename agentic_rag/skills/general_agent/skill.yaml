@@ -1,0 +1,18 @@
+id: assistant.general_agent
+version: 1.0.0
+description: "Handle safe non-mathematics conversation without claiming RAG evidence."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.general_agent.handler.handle
+timeout_ms: 45000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: [math.turn_router@1]
+fallback: none
+policies: [general_conversation]
+evaluator: general_agent_v1
+expose:
+  langchain: true
+  mcp: false

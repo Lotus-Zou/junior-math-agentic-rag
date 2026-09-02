@@ -7,7 +7,7 @@ from agentic_rag.chains import message_text
 from agentic_rag.fast_path import build_fast_response
 from agentic_rag.guardrails import ensure_tool_allowed, guided_answer_violations
 from agentic_rag.knowledge_graph import MathKnowledgeGraph
-from agentic_rag.math_retriever import fuse_rankings
+from agentic_rag.math_retriever import MathKnowledgeRetriever, fuse_rankings
 from agentic_rag.math_taxonomy import adaptive_chunk_size, classify_math_text, extract_formulas, tokenize_math
 from agentic_rag.math_validation import deterministic_equation_answer, deterministic_math_checks
 from agentic_rag.nodes import (
@@ -120,6 +120,21 @@ class MathPipelineTests(unittest.TestCase):
             with self.subTest(query=query):
                 self.assertEqual(classify_math_text(query).chapter, expected)
 
+    def test_exact_knowledge_points_take_priority_over_generic_terms(self):
+        cases = [
+            ("为什么一元一次不等式两边同除以负数时，不等号必须改变方向？", "代数", "一元一次不等式", "不等式性质"),
+            ("三角形全等的 SAS 判定条件是什么？", "几何", "全等三角形", None),
+            ("圆周角定理的内容是什么？", "几何", "圆周角", None),
+            ("勾股定理适用于什么三角形？", "几何", "勾股定理", None),
+        ]
+        for query, chapter, primary, secondary in cases:
+            with self.subTest(query=query):
+                result = classify_math_text(query)
+                self.assertEqual(result.chapter, chapter)
+                self.assertEqual(result.knowledge_points[0], primary)
+                if secondary:
+                    self.assertIn(secondary, result.knowledge_points)
+
     def test_formula_aware_chunk_sizes(self):
         dense = "公式：$x=(-b±\\sqrt{b^2-4ac})/(2a)$，并有 $\\Delta=b^2-4ac$，且 $a!=0$。"
         medium = "一次函数满足 y=kx+b。"
@@ -141,6 +156,43 @@ class MathPipelineTests(unittest.TestCase):
         self.assertGreater(scores["both"], scores["dense"])
         self.assertGreater(scores["both"], scores["bm25"])
         self.assertGreater(scores["both"], scores["graph"])
+
+    def test_production_retrieval_includes_new_source_section_before_reindex(self):
+        class StaleVectorIndex:
+            def count(self):
+                return 1
+
+            def get(self, **_kwargs):
+                return {
+                    "ids": ["old-equation"],
+                    "documents": ["## 七年级｜一元一次方程\n移项要变号。"],
+                    "metadatas": [{"chapter": "代数", "knowledge_points": "一元一次方程"}],
+                }
+
+            def query(self, **_kwargs):
+                return {
+                    "ids": [["old-equation"]],
+                    "documents": [["## 七年级｜一元一次方程\n移项要变号。"]],
+                    "metadatas": [[{"chapter": "代数", "knowledge_points": "一元一次方程"}]],
+                    "distances": [[0.4]],
+                }
+
+        retriever = MathKnowledgeRetriever("__unused__")
+        retriever._collection = StaleVectorIndex()
+        documents, _trace = retriever.retrieve_candidates(
+            ["为什么一元一次不等式两边同除以负数时，不等号必须改变方向？"],
+            "代数",
+            ["一元一次不等式", "不等式性质"],
+            candidate_k=5,
+            strategy="hybrid_graph",
+        )
+        inequality = [
+            document for document in documents
+            if "一元一次不等式与不等式性质" in document.page_content
+        ]
+        self.assertTrue(inequality)
+        self.assertIn("一元一次不等式", documents[0].page_content)
+        self.assertIn("一元一次不等式", inequality[0].metadata["knowledge_points"])
 
     def test_graph_rag_expands_prerequisites(self):
         graph = MathKnowledgeGraph(path="__missing_test_graph__.json")

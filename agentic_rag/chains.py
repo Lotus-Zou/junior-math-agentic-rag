@@ -11,6 +11,8 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
 
 from config import (
+    ATTACHMENT_LLM_CALL_TIMEOUT_SECONDS,
+    EXERCISE_LLM_CALL_TIMEOUT_SECONDS,
     CRITIC_MODEL_NAME,
     EMBEDDING_API_BASE,
     EMBEDDING_MODEL_NAME,
@@ -27,8 +29,13 @@ from config import (
 )
 
 
-def _build_llm(model: str):
-    params = {"model": model, "timeout": LLM_CALL_TIMEOUT_SECONDS, "max_retries": LLM_MAX_RETRIES}
+def _build_llm(
+    model: str,
+    *,
+    timeout: float = LLM_CALL_TIMEOUT_SECONDS,
+    max_retries: int = LLM_MAX_RETRIES,
+):
+    params = {"model": model, "timeout": timeout, "max_retries": max_retries}
     if OPENAI_API_BASE:
         params["base_url"] = OPENAI_API_BASE
     if MODEL_WIRE_API == "responses":
@@ -42,6 +49,12 @@ def _build_llm(model: str):
 
 
 generator_llm = _build_llm(LLM_MODEL_NAME)
+attachment_llm = _build_llm(
+    LLM_MODEL_NAME, timeout=ATTACHMENT_LLM_CALL_TIMEOUT_SECONDS
+)
+exercise_llm = _build_llm(
+    LLM_MODEL_NAME, timeout=EXERCISE_LLM_CALL_TIMEOUT_SECONDS
+)
 rerank_llm = _build_llm(RERANK_MODEL_NAME)
 critic_llm = _build_llm(CRITIC_MODEL_NAME)
 llm = generator_llm
@@ -117,6 +130,28 @@ class ValidationResult(BaseModel):
     defect_report: str = Field(default="", description="可复现的缺陷报告")
 
 
+class FirstErrorJudgeResult(BaseModel):
+    first_error_step: int = Field(ge=1, description="最早实质数学错误的步骤编号")
+    explanation: str = Field(
+        min_length=1,
+        description="简短、可核验的错误说明，不包含隐藏思维过程",
+    )
+
+
+class FinalAnswerJudgeResult(BaseModel):
+    is_complete: bool = Field(
+        description="题面是否包含独立求解所需的全部条件"
+    )
+    math_logic_valid: bool = Field(
+        description="corrected_answer 的推导与最终结论是否正确"
+    )
+    corrected_answer: str = Field(
+        default="",
+        description="题面完整时给出独立重算答案；题面不完整时具体解释歧义并给出条件化推导",
+    )
+    issues: List[str] = Field(default_factory=list)
+
+
 class MetadataExtractionResult(BaseModel):
     grade: str = "初中"
     chapter: str = "综合"
@@ -175,8 +210,26 @@ def get_rerank_chain():
 def get_answer_validation_chain():
     return _json_chain(
         ValidationResult,
-        """你是与生成 Agent 完全隔离的 Critic。分别执行：1) 事实忠实度校验，核对每个公式/定理与引用片段；2) 数学逻辑校验，核对推导、符号、单位、公式条件、跳步和最终结论。不能因文风流畅而通过。回答直接只给答案、越出初中大纲或引用不存在时必须失败，并输出可复现缺陷报告。""",
+        """你是与生成 Agent 完全隔离的 Critic。分别执行：1) 事实忠实度校验，核对每个公式/定理与引用片段；2) 数学逻辑校验，核对推导、符号、单位、公式条件、跳步和最终结论。不能因文风流畅而通过。普通产品回答若直接只给答案、越出初中大纲或引用不存在时必须失败，并输出可复现缺陷报告。对于题干和 A-D 选项已经完整给出的自包含选择题，应逐项独立验算；知识库没有逐字覆盖不能单独作为数学逻辑失败的理由，但错误或无关引用仍应标记 factual_faithfulness=false。对于要求数值结果的完整课堂应用题，如果草稿明确声明了常见教材约定（例如按每月 4 周估算），并且在该约定下逐步计算正确，则应判定 math_logic_valid=true；可以在 issues 中保留现实口径差异，但不得仅因还存在另一种现实换算口径而要求补题或否定答案。未声明约定、约定与题意冲突或计算错误时仍必须失败。课堂借款题若只写借款 N 个月、利率 r%，且没有 annual、per year、monthly、per month 等周期限定，则按整个所述借款期一次性简单利率 r% 计算；草稿明确这一约定且计算正确时不得自行改成年利率后拒绝。题面明确年利率或月利率时必须按明确周期换算。严格区分“达到阈值”和“首次超过阈值”：累计收益刚好等于成本只是回本，不是开始盈利；当周期数的商恰为整数且题目问何时开始盈利、超过成本或严格大于阈值时，答案必须进入下一个完整周期。若题目要求定位 First error，它是封闭题内的数学审查：不得仅因知识点超出初中大纲或没有外部检索证据而拒绝；必须从第一步开始依次复算，只接受最早一个会改变推导有效性或结果的实质数学错误。不影响数学含义和结果的术语不精确、文风、冗余说明以及仍在误差容限内的中间近似不能作为首错。若某一步明确使用约等号，且按该步已经显示的舍入数值计算一致，不得用更高精度重算后把舍入差当作该步错误；普通等号则声称精确相等，若舍入小数并不精确满足等式，该步就是错误。若原题要求精确值，后续把近似小数作为没有约等号的最终精确答案时，首错才落在该最终答案步骤。""",
         "题目: {query}\n学生错误作答: {student_answer}\n教材依据:\n{context}\n\n待验证草稿:\n{answer}\n\n确定性校验结果:\n{deterministic_checks}",
+        critic_llm,
+    )
+
+
+def get_first_error_judge_chain():
+    return _json_chain(
+        FirstErrorJudgeResult,
+        """你是生成 Agent 之外的最终数学裁决 Critic。输入包含完整题目、编号步骤、候选草稿和前两轮 Critic 缺陷。你必须独立从 Step 1 开始逐步复算，不得沿用候选结论；返回最早一个会改变推导有效性或结果的实质错误。忽略无害术语、文风和冗余说明。明确使用约等号且按已显示舍入值计算一致的中间近似不是错误；普通等号声称精确相等，舍入小数不精确满足等式时就是错误。原题要求精确值时，把近似小数作为无约等号的最终答案也是错误。不得因知识点超纲或没有外部检索证据拒绝封闭题内审查。""",
+        "完整审查请求:\n{query}\n\n候选草稿:\n{candidate}\n\n已有缺陷:\n{issues}",
+        critic_llm,
+    )
+
+
+def get_final_answer_judge_chain():
+    return _json_chain(
+        FinalAnswerJudgeResult,
+        """你是与生成 Agent、修复 Agent 和前两轮 Critic 隔离的最终数学裁决 Agent。你必须忽略候选草稿的结论，从原题条件独立重算，再给出可公开的、步骤可核验的 corrected_answer。不要因没有外部检索片段而拒绝自包含计算题或选择题。严格检查运算、单位、方程、除零、比例与阈值语义；达到成本只表示回本，题目问开始盈利或首次超过时必须使用严格大于。若题面缺少唯一求解所需条件，is_complete=false，但 corrected_answer 不能留空：必须点名缺少的具体条件，证明为什么结果不唯一，并尽可能给出不同假设下的条件化结果；这种回答不要伪造唯一的最终数值行。若能够独立确认，is_complete=true、math_logic_valid=true，并保留用户要求的最终答案格式（例如最后一行 Answer: value 或答案：A/B/C/D）。不得为了匹配候选答案而改变题意。""",
+        "完整题目:\n{query}\n\n二次修复后的候选草稿:\n{candidate}\n\n前两轮 Critic 缺陷:\n{issues}",
         critic_llm,
     )
 

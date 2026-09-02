@@ -1,0 +1,18 @@
+id: math.answer_repair
+version: 1.0.0
+description: "Repair a rejected junior-math draft once from Critic issues and the original textbook evidence."
+input_schema: agentic_rag.domain.schemas.AnswerRepairInput
+output_schema: agentic_rag.domain.schemas.AnswerDraftOutput
+handler: agentic_rag.skills.answer_repair.handler.handle
+timeout_ms: 45000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [llm]
+dependencies: [math.answer_critic@1]
+fallback: original_grounded_draft
+policies: [junior_math_scope]
+evaluator: answer_repair_v1
+expose:
+  langchain: false
+  mcp: false

@@ -1,0 +1,7 @@
+cases:
+  - id: router_precedes_scope_response
+    kind: pipeline
+    expected_status: OK
+  - id: no_rag_or_critic_rejection
+    kind: product
+    expected_status: OK

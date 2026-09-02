@@ -106,3 +106,16 @@ def test_angle_ratio_reasoning_may_include_the_180_degree_sum():
     )
 
     assert check_exercise_answer(store, item.exercise_id, answer).passed
+
+
+def test_isosceles_accepts_shared_base_angle_natural_language():
+    item = generate_from_template("geo.isosceles.base_angles.v1", 2, 8, seed=7)
+    store = ExerciseStore(ttl_seconds=60)
+    store.start(item, mastery={})
+
+    answer = (
+        f"两个底角都等于 {item.parameters['base_angle']} 度，"
+        "因为等腰三角形两底角相等，且三角形内角和为 180 度。"
+    )
+
+    assert check_exercise_answer(store, item.exercise_id, answer).passed

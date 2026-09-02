@@ -1,0 +1,6 @@
+question_id,case_type,grade,chapter,knowledge_point,question,student_wrong_answer,error_class,ideal_intent,expected_context_keywords,reference_answer,relevant_source
+RAG-001,normal,八年级,函数,一次函数,"一次函数 y=-2x+3 的斜率和截距分别是什么？图像大致怎么画？",,,knowledge_query,"一次函数|斜率|截距|直线","斜率为 -2，y 轴截距为 3。可先描出 (0,3)，再根据斜率向右 1、向下 2 得到 (1,1)，连接两点画直线。",初中数学核心知识.md
+RAG-002,normal,八年级,代数,一元一次不等式,"为什么一元一次不等式两边同除以负数时，不等号必须改变方向？",,,knowledge_query,"不等式|负数|变号","负数乘除会使数轴上的大小顺序反转，因此不等式两边同乘或同除以负数时必须改变不等号方向。",初中数学核心知识.md
+RAG-003,normal,八年级,几何,全等三角形,"三角形全等的 SAS 判定条件是什么？使用时要注意什么？",,,knowledge_query,"全等|边角边|夹角","SAS 是边角边：两个三角形有两组对应边相等，并且这两边的夹角相等，则两个三角形全等；角必须是两条已知边的夹角。",初中数学核心知识.md
+RAG-004,normal,九年级,几何,圆周角,"圆周角定理的内容是什么？同弧所对圆周角和圆心角有什么关系？",,,knowledge_query,"圆周角|圆心角|同弧","同弧所对的圆周角相等，并且等于该弧所对圆心角的一半。",初中数学核心知识.md
+RAG-005,normal,八年级,几何,勾股定理,"勾股定理适用于什么三角形？三边关系如何表示？",,,knowledge_query,"勾股定理|直角三角形|斜边|平方","勾股定理适用于直角三角形。若两直角边为 a、b，斜边为 c，则 a²+b²=c²。",初中数学核心知识.md

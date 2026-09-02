@@ -3,6 +3,10 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+import re
+from threading import Lock
 from typing import Dict, List, Sequence, Tuple
 
 import chromadb
@@ -10,8 +14,8 @@ from langchain_core.documents import Document
 from rank_bm25 import BM25Okapi
 
 from agentic_rag.knowledge_graph import math_knowledge_graph
-from agentic_rag.math_taxonomy import tokenize_math
-from config import CHROMA_PATH, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP_K
+from agentic_rag.math_taxonomy import classify_math_text, tokenize_math
+from config import CHROMA_PATH, KNOWLEDGE_SOURCE_PATH, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP_K
 
 CHUNK_COLLECTION_NAME = "math_chunks"
 
@@ -30,19 +34,42 @@ class MathKnowledgeRetriever:
 
     def __init__(self, persist_path: str = CHROMA_PATH):
         self.persist_path = persist_path
+        # `_collection` remains a test injection seam. Production uses separate
+        # read and dense handles so BM25/GraphRAG never need to load an encoder.
         self._collection = None
+        self._read_collection = None
+        self._dense_collection = None
+        self._collection_lock = Lock()
 
     @property
     def collection(self):
-        if self._collection is None:
-            from agentic_rag.chains import get_embedding_function
+        if self._collection is not None:
+            return self._collection
+        if self._read_collection is None:
+            with self._collection_lock:
+                if self._read_collection is None:
+                    client = chromadb.PersistentClient(path=self.persist_path)
+                    self._read_collection = client.get_or_create_collection(
+                        CHUNK_COLLECTION_NAME,
+                        embedding_function=None,
+                    )
+        return self._read_collection
 
-            client = chromadb.PersistentClient(path=self.persist_path)
-            self._collection = client.get_or_create_collection(
-                CHUNK_COLLECTION_NAME,
-                embedding_function=get_embedding_function(),
-            )
-        return self._collection
+    @property
+    def dense_collection(self):
+        if self._collection is not None:
+            return self._collection
+        if self._dense_collection is None:
+            with self._collection_lock:
+                if self._dense_collection is None:
+                    from agentic_rag.chains import get_embedding_function
+
+                    client = chromadb.PersistentClient(path=self.persist_path)
+                    self._dense_collection = client.get_collection(
+                        CHUNK_COLLECTION_NAME,
+                        embedding_function=get_embedding_function(),
+                    )
+        return self._dense_collection
 
     @staticmethod
     def _where(chapter: str):
@@ -54,12 +81,44 @@ class MathKnowledgeRetriever:
         if where:
             get_args["where"] = where
         pool = self.collection.get(**get_args)
-        return {
+        pool_by_id = {
             doc_id: (text, metadata or {})
             for doc_id, text, metadata in zip(
                 pool.get("ids", []), pool.get("documents", []), pool.get("metadatas", [])
             )
         }
+        source = Path(KNOWLEDGE_SOURCE_PATH)
+        if source.is_file():
+            content = source.read_text(encoding="utf-8")
+            known_headings = {
+                text.splitlines()[0].strip()
+                for text, _metadata in pool_by_id.values()
+                if text.strip()
+            }
+            for section in re.split(r"(?=^##\s+)", content, flags=re.MULTILINE):
+                section = section.strip()
+                if not section.startswith("## "):
+                    continue
+                heading = section.splitlines()[0].strip()
+                if heading in known_headings:
+                    continue
+                classified = classify_math_text(section)
+                if chapter and chapter != "综合" and classified.chapter != chapter:
+                    continue
+                chunk_id = "source-" + hashlib.sha256(section.encode("utf-8")).hexdigest()[:32]
+                pool_by_id[chunk_id] = (
+                    section,
+                    {
+                        "chunk_id": chunk_id,
+                        "source": "data/初中数学核心知识.md",
+                        "chapter": classified.chapter,
+                        "grade": classified.grade,
+                        "knowledge_points": "、".join(classified.knowledge_points),
+                        "question_type": classified.question_type,
+                        "index_state": "lexical_graph_pending_dense",
+                    },
+                )
+        return pool_by_id
 
     @staticmethod
     def _channel_documents(
@@ -95,7 +154,7 @@ class MathKnowledgeRetriever:
             }
             if where:
                 args["where"] = where
-            result = self.collection.query(**args)
+            result = self.dense_collection.query(**args)
             for doc_id, text, metadata, distance in zip(
                 (result.get("ids") or [[]])[0],
                 (result.get("documents") or [[]])[0],
@@ -151,47 +210,56 @@ class MathKnowledgeRetriever:
         """Return RRF candidates; LLM-Rerank is deliberately a separate graph node."""
         if strategy not in {"dense", "hybrid", "hybrid_graph"}:
             raise ValueError(f"Unsupported retrieval strategy: {strategy}")
-        total = self.collection.count()
-        if total == 0:
-            return [], [{"stage": "category_recall", "chapter": chapter, "candidates": 0}]
         normalized_queries = list(dict.fromkeys(query.strip() for query in queries if query.strip()))
         if not normalized_queries:
             return [], [{"stage": "query_decomposition", "queries": 0}]
 
-        where = self._where(chapter)
-        get_args = {"include": ["documents", "metadatas"]}
-        if where:
-            get_args["where"] = where
-        category_pool = self.collection.get(**get_args)
-        document_by_id = {
-            doc_id: (text, metadata or {})
-            for doc_id, text, metadata in zip(
-                category_pool.get("ids", []),
-                category_pool.get("documents", []),
-                category_pool.get("metadatas", []),
-            )
-        }
+        # Use the same category pool for every channel. It merges the persisted
+        # vector index with newly added source sections, so BM25 and GraphRAG
+        # remain usable before the next dense-index rebuild.
+        document_by_id = self._category_pool(chapter)
         if not document_by_id:
             return [], [{"stage": "category_recall", "chapter": chapter, "candidates": 0}]
 
+        where = self._where(chapter)
         dense_rankings: List[List[str]] = []
-        for query in normalized_queries:
-            query_args = {
-                "query_texts": [query],
-                "n_results": min(candidate_k, len(document_by_id)),
-                "include": ["documents", "metadatas", "distances"],
-            }
-            if where:
-                query_args["where"] = where
-            dense = self.collection.query(**query_args)
-            dense_ids = (dense.get("ids") or [[]])[0]
-            dense_rankings.append(dense_ids)
-            for doc_id, text, metadata in zip(
-                dense_ids,
-                (dense.get("documents") or [[]])[0],
-                (dense.get("metadatas") or [[]])[0],
-            ):
-                document_by_id.setdefault(doc_id, (text, metadata or {}))
+        if self.collection.count() > 0:
+            for query in normalized_queries:
+                query_args = {
+                    "query_texts": [query],
+                    "n_results": min(candidate_k, len(document_by_id)),
+                    "include": ["documents", "metadatas", "distances"],
+                }
+                if where:
+                    query_args["where"] = where
+                dense = self.dense_collection.query(**query_args)
+                dense_ids = (dense.get("ids") or [[]])[0]
+                dense_rankings.append(dense_ids)
+                for doc_id, text, metadata in zip(
+                    dense_ids,
+                    (dense.get("documents") or [[]])[0],
+                    (dense.get("metadatas") or [[]])[0],
+                ):
+                    document_by_id.setdefault(doc_id, (text, metadata or {}))
+
+        category_scores = {
+            doc_id: sum(
+                2 if point in str(metadata.get("knowledge_points", ""))
+                else 1 if point in text
+                else 0
+                for point in knowledge_points
+            )
+            for doc_id, (text, metadata) in document_by_id.items()
+        }
+        category_ranking = [
+            doc_id
+            for doc_id in sorted(
+                category_scores,
+                key=category_scores.get,
+                reverse=True,
+            )
+            if category_scores[doc_id] > 0
+        ][:candidate_k]
 
         corpus_ids = list(document_by_id)
         bm25_rankings: List[List[str]] = []
@@ -224,7 +292,7 @@ class MathKnowledgeRetriever:
                 if any(point in document_by_id[doc_id][0] or point in str(document_by_id[doc_id][1]) for point in graph_points)
             ][:candidate_k]
 
-        rankings = [*dense_rankings, *bm25_rankings]
+        rankings = [category_ranking, *dense_rankings, *bm25_rankings]
         if graph_ranking:
             rankings.append(graph_ranking)
         fused = fuse_rankings(*rankings)
@@ -243,7 +311,12 @@ class MathKnowledgeRetriever:
 
         trace = [
             {"stage": "query_decomposition", "queries": normalized_queries, "strategy": strategy},
-            {"stage": "category_recall", "chapter": chapter, "candidates": len(document_by_id)},
+            {
+                "stage": "category_recall",
+                "chapter": chapter,
+                "candidates": len(document_by_id),
+                "knowledge_point_matches": len(category_ranking),
+            },
             {"stage": "dense_retrieval", "rankings": [len(items) for items in dense_rankings]},
             {"stage": "bm25_retrieval", "enabled": strategy != "dense", "rankings": [len(items) for items in bm25_rankings]},
             {"stage": "graph_rag", "enabled": strategy == "hybrid_graph", "expanded_points": graph_points, "matched": len(graph_ranking)},

@@ -21,7 +21,6 @@ class BrokenGraph:
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(app_module, "_graph_executor", ThreadPoolExecutor(max_workers=1))
-    monkeypatch.setattr(app_module, "_run_curriculum_skill", lambda _request: None)
     monkeypatch.setattr(app_module.answer_cache, "get", lambda _payload: None)
     with TestClient(app_module.app, raise_server_exceptions=False) as test_client:
         yield test_client
@@ -29,6 +28,7 @@ def client(monkeypatch):
 
 @pytest.mark.parametrize("graph", [SlowGraph(), BrokenGraph()])
 def test_runtime_failure_returns_safe_clarification(monkeypatch, client, graph):
+    monkeypatch.setattr(app_module, "_run_curriculum_skill", lambda _request: None)
     monkeypatch.setattr(app_module, "get_graph", lambda: graph)
     monkeypatch.setattr(app_module, "RUN_TIMEOUT_SECONDS", 0.01)
 
@@ -47,6 +47,24 @@ def test_runtime_failure_returns_safe_clarification(monkeypatch, client, graph):
     assert payload["trace_id"]
 
 
+def test_runtime_failure_keeps_verified_math_baseline(monkeypatch, client):
+    monkeypatch.setattr(app_module, "_run_curriculum_skill", lambda _request: None)
+
+    response = client.post(
+        "/ask",
+        json={"query": "解方程 2x+3=11", "language": "zh"},
+    )
+    payload = response.json()
+
+    assert response.status_code == 200
+    assert payload["response_type"] == "verified_answer"
+    assert payload["validation_passed"] is True
+    assert "x = 4" in payload["answer"]
+    assert payload["metrics"]["model_attempts"] >= 1
+    assert payload["metrics"]["model_successes"] == 0
+    assert payload["metrics"]["model_failures"] >= 1
+
+
 def test_security_guard_returns_typed_refusal_instead_of_http_error(client):
     response = client.post(
         "/ask",
@@ -59,8 +77,9 @@ def test_security_guard_returns_typed_refusal_instead_of_http_error(client):
 
 
 def test_frontend_waits_longer_than_server_budget():
-    source = (app_module.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    source = (
+        app_module.STATIC_DIR.parent / "frontend" / "src" / "App.tsx"
+    ).read_text(encoding="utf-8")
 
-    assert "controller.abort(), 35000" in source
+    assert "controller.abort(), 185000" in source
     assert "controller.abort(), 12000" not in source
-

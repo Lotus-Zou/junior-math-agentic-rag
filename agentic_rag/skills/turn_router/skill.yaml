@@ -1,0 +1,17 @@
+id: math.turn_router
+version: 1.0.0
+description: "Classify each junior-mathematics conversation turn before answer checking or retrieval."
+input_schema: agentic_rag.domain.schemas.TurnRouteInput
+output_schema: agentic_rag.domain.schemas.TurnRouteOutput
+handler: agentic_rag.skills.turn_router.handler.handle
+timeout_ms: 250
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: []
+policies: [junior_math_scope]
+evaluator: turn_router_v1
+expose:
+  langchain: false
+  mcp: false

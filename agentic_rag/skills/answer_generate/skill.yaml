@@ -4,11 +4,11 @@ description: "Junior mathematics answer generate business capability with typed 
 input_schema: agentic_rag.domain.schemas.AnswerGenerateInput
 output_schema: agentic_rag.domain.schemas.AnswerDraftOutput
 handler: agentic_rag.skills.answer_generate.handler.handle
-timeout_ms: 1500
+timeout_ms: 90000
 max_attempts: 1
 idempotent: true
 side_effects: []
-required_capabilities: []
+required_capabilities: [llm]
 dependencies: []
 policies: [junior_math_scope]
 evaluator: answer_generate_v1

@@ -1,6 +1,6 @@
 id: math.knowledge_qa
 version: 1.0.0
-sla_ms: 8000
+sla_ms: 180000
 entry: query_rewrite
 nodes:
   query_rewrite: {skill: math.query_rewrite@1, next: knowledge_classify}

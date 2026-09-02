@@ -89,7 +89,12 @@ def run() -> dict:
                 continue
             case, total = json.loads(line), total + 1
             pipeline = loader.load(ROOT / "agentic_rag" / "pipelines" / case["pipeline"])
-            context = SkillContext(request_id=case["id"], trace_id=case["id"], deadline_at=datetime.now(timezone.utc) + timedelta(seconds=8))
+            context = SkillContext(
+                request_id=case["id"],
+                trace_id=case["id"],
+                deadline_at=datetime.now(timezone.utc) + timedelta(seconds=8),
+                policy_set={"allow:math.exercise_generate"},
+            )
             state = runner.run(pipeline, case["input"], context)
             reasons = check_case(case, state)
             if reasons:

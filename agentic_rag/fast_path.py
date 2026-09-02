@@ -600,6 +600,8 @@ def _adaptive_generated_response(
     summary: str,
     language: str,
     current: ExerciseSessionState | None,
+    *,
+    use_agent: bool = False,
 ) -> dict:
     try:
         exercise = _adaptive_exercise_generator.generate(request)
@@ -610,6 +612,19 @@ def _adaptive_generated_response(
         exercise = _adaptive_exercise_generator.generate(fallback)
     if not validate_generated_exercise(exercise).passed:
         return _invalid_local_template_response(query, history, summary, language)
+    tool_calls = 0
+    model_attempts = 0
+    model_failures = 0
+    agent_verified = False
+    if use_agent:
+        from agentic_rag.exercises.agent import enhance_verified_exercise
+
+        enhanced = enhance_verified_exercise(exercise, request)
+        exercise = enhanced.exercise
+        tool_calls = enhanced.tool_calls
+        model_attempts = enhanced.model_attempts
+        model_failures = enhanced.model_failures
+        agent_verified = enhanced.critic_passed
     private_state = _adaptive_private_state(exercise)
     if private_state is None:
         return _invalid_local_template_response(query, history, summary, language)
@@ -631,9 +646,17 @@ def _adaptive_generated_response(
                 }
             ],
             "validation_passed": True,
-            "validation_evidence": {"kind": "deterministic", "passed": True},
+            "validation_evidence": {
+                "kind": "independent_critic" if agent_verified else "deterministic",
+                "passed": True,
+            },
             "exercise_state": public.model_dump(mode="json"),
-            "metrics": {"tool_calls": 0},
+            "metrics": {
+                "tool_calls": tool_calls,
+                "model_attempts": model_attempts,
+                "model_successes": tool_calls,
+                "model_failures": model_failures,
+            },
         }
     )
     return normalize_response(
@@ -649,9 +672,15 @@ def _adaptive_command_response(
     summary: str,
     language: str,
     exercise_state: Any,
+    *,
+    use_agent: bool = False,
+    turn_intent: str | None = None,
 ) -> dict | None:
     command = parse_local_command(query, language)
-    composite_practice = command is None and _explicit_adaptive_practice_request(query)
+    routed_practice = turn_intent in {"new_exercise", "difficulty_adjustment"}
+    composite_practice = command is None and (
+        routed_practice or _explicit_adaptive_practice_request(query)
+    )
     if command is None and not composite_practice:
         return None
     if command is not None and command.action in {"new_question", "reset"}:
@@ -687,6 +716,29 @@ def _adaptive_command_response(
         summary,
         language,
         current,
+        use_agent=use_agent,
+    )
+
+
+def build_agentic_exercise_response(
+    query: str,
+    conversation_history: list[dict[str, Any]] | None,
+    conversation_summary: str,
+    language: str,
+    exercise_state: Any = None,
+    *,
+    agent_enabled: bool = True,
+    turn_intent: str | None = None,
+) -> dict | None:
+    """Production exercise branch: routed first, authored by Agent, verified before storage."""
+    return _adaptive_command_response(
+        query,
+        conversation_history or [],
+        conversation_summary,
+        language,
+        exercise_state,
+        use_agent=agent_enabled,
+        turn_intent=turn_intent,
     )
 
 
@@ -723,6 +775,7 @@ def _asks_for_solution_reveal(query: str) -> bool:
     chinese_markers = (
         "给出答案",
         "给我答案",
+        "完整答案",
         "告诉我答案",
         "告诉我完整解答",
         "直接告诉我",
@@ -752,6 +805,7 @@ def _adaptive_answer_response(
     summary: str,
     language: str,
     exercise_state: Any,
+    turn_intent: str | None = None,
 ) -> dict | None:
     if exercise_state is None or parse_local_command(query, language) is not None:
         return None
@@ -760,10 +814,20 @@ def _adaptive_answer_response(
         return _adaptive_state_clarification(query, history, summary, language)
     public, session, exercise = resolved
     normalized = unicodedata.normalize("NFKC", query or "").strip().lower()
-    asks_for_solution = _asks_for_solution_reveal(query)
-    asks_for_hint = not asks_for_solution and any(
-        marker in normalized
-        for marker in ("提示", "不会", "没思路", "hint", "stuck")
+    asks_for_solution = (
+        turn_intent == "solution_reveal"
+        or _asks_for_solution_reveal(query)
+    )
+    asks_for_hint = (
+        turn_intent == "hint_request"
+        or (
+            turn_intent is None
+            and not asks_for_solution
+            and any(
+                marker in normalized
+                for marker in ("提示", "不会", "没思路", "hint", "stuck")
+            )
+        )
     )
     checked = check_exercise_answer(
         _adaptive_exercise_store,
@@ -1778,6 +1842,7 @@ def build_fast_response(
     summary: str = "",
     language: str = "zh",
     exercise_state: Any = None,
+    turn_intent: str | None = None,
 ) -> dict | None:
     """Return a deterministic response when the request has a safe local implementation."""
     return (
@@ -1787,6 +1852,7 @@ def build_fast_response(
             summary,
             language,
             exercise_state,
+            turn_intent=turn_intent,
         )
         or _adaptive_answer_response(
             query,
@@ -1794,6 +1860,7 @@ def build_fast_response(
             summary,
             language,
             exercise_state,
+            turn_intent,
         )
         or _local_command_response(query, history, summary, language)
         or _new_question_response(query, language)

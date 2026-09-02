@@ -1,0 +1,17 @@
+id: web.tavily_search
+version: 1.0.0
+description: "Search Tavily for junior-high mathematics evidence only after local retrieval is empty; returns bounded cited results."
+input_schema: agentic_rag.domain.schemas.RetrievalInput
+output_schema: agentic_rag.domain.schemas.RetrievalOutput
+handler: agentic_rag.skills.tavily_search.handler.handle
+timeout_ms: 12000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [network, retrieval]
+dependencies: []
+policies: [junior_math_scope, external_evidence_untrusted]
+evaluator: tavily_search_v1
+expose:
+  langchain: true
+  mcp: true

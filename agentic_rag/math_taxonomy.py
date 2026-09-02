@@ -9,17 +9,31 @@ from typing import Iterable, List
 
 CHAPTER_KEYWORDS = {
     "函数": ("函数", "坐标", "图像", "正比例", "反比例", "一次函数", "二次函数", "自变量"),
-    "几何": ("三角形", "四边形", "圆", "角", "平行", "垂直", "全等", "相似", "勾股", "面积", "体积", "证明"),
+    "几何": ("三角形", "四边形", "圆", "角", "线段", "中点", "平行", "垂直", "全等", "相似", "勾股", "面积", "体积", "证明"),
     "代数": ("方程", "不等式", "因式分解", "整式", "分式", "根式", "实数", "有理数", "未知数", "解集"),
     "统计与概率": ("概率", "统计", "平均数", "中位数", "众数", "方差", "频率", "样本"),
 }
 GRADE_KEYWORDS = {
-    "七年级": ("有理数", "整式", "一元一次方程", "相交线", "平行线", "统计调查"),
+    "七年级": ("有理数", "整式", "一元一次方程", "一元一次不等式", "不等式性质", "相交线", "平行线", "统计调查"),
     "八年级": ("全等三角形", "轴对称", "勾股", "一次函数", "因式分解", "分式"),
     "九年级": ("一元二次方程", "二次函数", "旋转", "圆", "相似", "锐角三角函数", "概率"),
 }
+CANONICAL_KNOWLEDGE_RULES = (
+    ("一元一次不等式", "代数", "七年级", ("一元一次不等式", "解不等式", "不等式组")),
+    ("不等式性质", "代数", "七年级", ("不等式两边", "不等号", "改变方向", "方向改变", "同乘", "同除")),
+    ("一元一次方程", "代数", "七年级", ("一元一次方程", "解方程", "移项")),
+    ("一元二次方程", "代数", "九年级", ("一元二次方程", "判别式", "求根公式")),
+    ("一次函数", "函数", "八年级", ("一次函数", "斜率", "截距")),
+    ("二次函数", "函数", "九年级", ("二次函数", "抛物线", "对称轴")),
+    ("全等三角形", "几何", "八年级", ("全等三角形", "三角形全等", "SAS", "SSS", "ASA", "AAS")),
+    ("勾股定理", "几何", "八年级", ("勾股定理", "勾股", "斜边平方")),
+    ("圆周角", "几何", "九年级", ("圆周角", "同弧", "圆心角")),
+    ("相似三角形", "几何", "九年级", ("相似三角形", "三角形相似", "相似比")),
+)
 PREREQUISITES = {
     "一元一次方程": ("有理数运算", "等式性质", "整式运算"),
+    "一元一次不等式": ("有理数运算", "不等式性质", "数轴"),
+    "不等式性质": ("有理数", "数轴"),
     "一元二次方程": ("一元一次方程", "因式分解", "平方根"),
     "一次函数": ("平面直角坐标系", "一元一次方程"),
     "二次函数": ("一元二次方程", "一次函数", "配方法"),
@@ -50,19 +64,29 @@ def _matches(text: str, keywords: Iterable[str]) -> List[str]:
 
 def classify_math_text(text: str) -> MathClassification:
     normalized = re.sub(r"\s+", "", text or "")
+    canonical_matches = [
+        (point, chapter, grade)
+        for point, chapter, grade, aliases in CANONICAL_KNOWLEDGE_RULES
+        if any(alias.lower() in normalized.lower() for alias in aliases)
+    ]
     explicit_chapter = next(
         (chapter for chapter in CHAPTER_KEYWORDS if re.search(rf"(?:^|\n)#{{1,3}}\s*{chapter}", text or "")),
         None,
     )
     chapter_scores = {chapter: _matches(normalized, words) for chapter, words in CHAPTER_KEYWORDS.items()}
-    chapter = explicit_chapter or max(chapter_scores, key=lambda item: len(chapter_scores[item]))
-    if not explicit_chapter and not chapter_scores[chapter]:
+    canonical_chapter = canonical_matches[0][1] if canonical_matches else None
+    chapter = explicit_chapter or canonical_chapter or max(chapter_scores, key=lambda item: len(chapter_scores[item]))
+    if not explicit_chapter and not canonical_chapter and not chapter_scores[chapter]:
         chapter = "综合"
     grade_scores = {grade: _matches(normalized, words) for grade, words in GRADE_KEYWORDS.items()}
-    grade = max(grade_scores, key=lambda item: len(grade_scores[item]))
-    if not grade_scores[grade]:
+    canonical_grade = canonical_matches[0][2] if canonical_matches else None
+    grade = canonical_grade or max(grade_scores, key=lambda item: len(grade_scores[item]))
+    if not canonical_grade and not grade_scores[grade]:
         grade = "初中"
-    knowledge_points = chapter_scores.get(chapter, [])[:4] or [chapter]
+    knowledge_points = list(dict.fromkeys(
+        [point for point, _, _ in canonical_matches]
+        + chapter_scores.get(chapter, [])
+    ))[:4] or [chapter]
     if any(word in normalized for word in ("证明", "求证")):
         question_type = "证明题"
     elif any(word in normalized for word in ("图像", "作图", "画出")):

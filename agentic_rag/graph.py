@@ -24,11 +24,23 @@ from agentic_rag.nodes import (
     validation_failure_response_node,
 )
 from agentic_rag.state import AgentState
-from config import MAX_CORRECTION_ATTEMPTS
+from config import (
+    ENABLE_DENSE_RETRIEVAL,
+    ENABLE_EXERCISE_AGENT,
+    ENABLE_TUTOR_AGENT,
+    FORCE_LLM_EVERY_TURN,
+    MAX_CORRECTION_ATTEMPTS,
+    TAVILY_API_KEY,
+)
 
 
-def build_skill_pipeline_graph():
-    """Build the versioned YAML pipeline during strangler migration."""
+def build_named_skill_pipeline_graph(
+    pipeline_name: str,
+    executor=None,
+    *,
+    feature_flags: dict[str, bool] | None = None,
+):
+    """Compile one versioned YAML Workflow into a LangGraph application."""
     from agentic_rag.skill_runtime.adapters.langgraph import LangGraphPipelineAdapter
     from agentic_rag.skill_runtime.contracts import SkillContext
     from agentic_rag.skill_runtime.executor import SkillExecutor
@@ -37,8 +49,19 @@ def build_skill_pipeline_graph():
 
     registry = get_default_registry()
     manifest = PipelineLoader(registry).load(
-        Path(__file__).resolve().parent / "pipelines" / "correction.yaml"
+        Path(__file__).resolve().parent / "pipelines" / f"{pipeline_name}.yaml"
     )
+    runtime_flags = {
+        "dense_retrieval": ENABLE_DENSE_RETRIEVAL,
+        "llm_rerank": FORCE_LLM_EVERY_TURN,
+        "llm_generate": True,
+        "llm_critic": True,
+        "exercise_agent": ENABLE_EXERCISE_AGENT,
+        "tutor_agent": ENABLE_TUTOR_AGENT,
+        "force_llm_every_turn": FORCE_LLM_EVERY_TURN,
+        "web_search": bool(TAVILY_API_KEY),
+        **(feature_flags or {}),
+    }
 
     def context_factory(state: dict) -> SkillContext:
         deadline = float(state.get("deadline_at", 0))
@@ -52,9 +75,16 @@ def build_skill_pipeline_graph():
             session_id=str(state.get("session_id", "anonymous")),
             language=str(state.get("response_language", "zh")),
             deadline_at=deadline_at,
+            policy_set={"allow:math.exercise_generate"},
+            feature_flags=runtime_flags,
         )
 
-    return LangGraphPipelineAdapter(SkillExecutor(registry)).compile(manifest, context_factory)
+    return LangGraphPipelineAdapter(executor or SkillExecutor(registry)).compile(manifest, context_factory)
+
+
+def build_skill_pipeline_graph(executor=None):
+    """Build the production correction Workflow."""
+    return build_named_skill_pipeline_graph("correction", executor)
 
 
 def build_graph():

@@ -231,9 +231,14 @@ def test_curriculum_skill_and_renderer_use_typed_public_envelopes():
     pipeline = PipelineLoader(registry).load(ROOT / "agentic_rag" / "pipelines" / "correction.yaml")
     runner = PipelineExecutor(SkillExecutor(registry))
     verified = runner.run(pipeline, {"query": "解方程 2x+3=11", "language": "zh"}, _context("typed-verified"))
-    guided = runner.run(pipeline, {"query": "几何", "language": "zh"}, _context("typed-guided"))
+    guided_context = _context("typed-guided").model_copy(
+        update={"policy_set": {"allow:math.exercise_generate"}}
+    )
+    guided = runner.run(
+        pipeline, {"query": "几何", "language": "zh"}, guided_context
+    )
     assert verified["curriculum_solve"].response.response_type == "verified_answer"
-    assert guided["curriculum_solve"].response.response_type == "guided_exercise"
+    assert guided["exercise_generate"].response.response_type == "guided_exercise"
     assert verified["response_render"].response_type == "verified_answer"
     assert guided["response_render"].response_type == "guided_exercise"
 
@@ -275,9 +280,10 @@ def test_nested_public_projection_is_recursive_and_keeps_supported_metadata():
             "sources": [
                 {
                     "chunk_id": "chunk-1",
-                    "source": "textbook.md",
+                    "source": r"C:\repo\data\初中数学核心知识.md",
                     "chapter": "代数",
                     "rank": 1,
+                    "excerpt": "等式两边同时减去同一个数，等式仍成立。",
                     "metadata": {"model": "private"},
                     "critic": {"passed": True},
                 }
@@ -297,7 +303,13 @@ def test_nested_public_projection_is_recursive_and_keeps_supported_metadata():
     )
 
     assert result["sources"] == [
-        {"chunk_id": "chunk-1", "source": "textbook.md", "chapter": "代数", "rank": 1}
+        {
+            "chunk_id": "chunk-1",
+            "source": "data/初中数学核心知识.md",
+            "chapter": "代数",
+            "rank": 1,
+            "excerpt": "等式两边同时减去同一个数，等式仍成立。",
+        }
     ]
     assert result["exercise_state"] == {"topic": "algebra", "difficulty_delta": 1}
     assert result["clarification"] == {"missing": ["完整题干"]}
@@ -402,14 +414,17 @@ def test_first_paint_copy_contains_only_student_facing_language():
 
 
 def test_bilingual_ui_uses_student_facing_practice_copy():
-    javascript = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    app_source = (ROOT / "frontend" / "src" / "App.tsx").read_text(encoding="utf-8")
+    i18n_source = (ROOT / "frontend" / "src" / "i18n.ts").read_text(encoding="utf-8")
     public_assets = (
-        (ROOT / "static" / "index.html").read_text(encoding="utf-8") + javascript
+        (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+        + app_source
+        + i18n_source
     ).lower()
 
-    assert 'practice: "练习"' in javascript
-    assert 'practice: "Practice"' in javascript
-    assert 'guided_exercise: t("practice")' in javascript
+    assert 'practice: "练习题"' in i18n_source
+    assert 'practice: "Practice"' in i18n_source
+    assert 'guided_exercise: text(language, "practice")' in app_source
     for forbidden in (
         "本地生成练习",
         "本地确定性校验",

@@ -4,7 +4,7 @@ description: "Junior mathematics retrieve bm25 business capability with typed in
 input_schema: agentic_rag.domain.schemas.RetrievalInput
 output_schema: agentic_rag.domain.schemas.RetrievalOutput
 handler: agentic_rag.skills.retrieval_bm25.handler.handle
-timeout_ms: 1200
+timeout_ms: 4000
 max_attempts: 1
 idempotent: true
 side_effects: []

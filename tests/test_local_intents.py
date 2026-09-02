@@ -11,7 +11,10 @@ from agentic_rag.local_intents import parse_local_command
         ("\u4e00\u6b21\u51fd\u6570", "practice", "linear_function", 0),
         ("\u518d\u6765\u4e00\u9053", "next_exercise", None, 0),
         ("\u96be\u4e00\u70b9", "adjust_difficulty", None, 1),
+        ("太简单了", "adjust_difficulty", None, 1),
+        ("太容易了", "adjust_difficulty", None, 1),
         ("\u7b80\u5355\u4e00\u70b9", "adjust_difficulty", None, -1),
+        ("太难了", "adjust_difficulty", None, -1),
         ("\u6362\u4e2a\u95ee\u9898", "new_question", None, 0),
     ],
 )
@@ -27,9 +30,12 @@ def test_short_commands(query, action, topic, delta):
         ("geometry", "practice", "geometry", 0),
         ("algebra", "practice", "algebra", 0),
         ("linear function", "practice", "linear_function", 0),
+        ("practice", "practice", None, 0),
         ("another exercise", "next_exercise", None, 0),
         ("harder", "adjust_difficulty", None, 1),
+        ("too easy", "adjust_difficulty", None, 1),
         ("easier", "adjust_difficulty", None, -1),
+        ("too hard", "adjust_difficulty", None, -1),
         ("new question", "new_question", None, 0),
     ],
 )
