@@ -20,7 +20,7 @@ from threading import Lock
 from typing import Any, Literal
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -926,6 +926,20 @@ def queue():
 def create_learning_task(request: LearningTaskRequest):
     task_id = enqueue(request.kind, request.payload, user_id=request.user_id, session_id=request.session_id)
     return {"task_id": task_id, "status": "queued", "kind": request.kind}
+
+
+@app.post("/ask/stream")
+async def ask_stream(request: AskRequest):
+    """SSE-compatible envelope for C clients; the graph result is verified before emission."""
+    result = await ask(request)
+
+    async def events():
+        yield "event: answer\n"
+        yield "data: " + json.dumps(result, ensure_ascii=False) + "\n\n"
+        yield "event: done\n"
+        yield "data: {}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 @app.get("/", include_in_schema=False)
 def home():
