@@ -1,9 +1,24 @@
 services:
+  gateway:
+    build: ./gateway
+    environment:
+      AI_UPSTREAM: http://app:8000
+      GATEWAY_RATE_PER_SECOND: 80
+      GATEWAY_RATE_BURST: 160
+      GATEWAY_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      app:
+        condition: service_started
+    restart: unless-stopped
+
   app:
     build: .
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
+      AI_MAX_INFLIGHT: 64
     ports:
       - "8000:8000"
     volumes:
@@ -14,6 +29,38 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./data:/app/data
+      - ./traces:/app/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: math_agent
+      MYSQL_USER: math_agent
+      MYSQL_PASSWORD: math_agent_dev
+      MYSQL_ROOT_PASSWORD: root_dev_only
+    command: ["--default-authentication-plugin=mysql_native_password", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_dev_only"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 
   redis:
@@ -30,4 +77,5 @@ services:
 
 volumes:
   redis-data:
+  mysql-data:
   huggingface-cache:

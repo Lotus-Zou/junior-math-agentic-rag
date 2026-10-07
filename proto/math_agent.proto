@@ -1,0 +1,11 @@
+syntax = "proto3";
+package mathagent.v1;
+option go_package = "github.com/Lotus-Zou/junior-math-agentic-rag/proto/mathagentv1";
+
+service MathAgent { rpc Ask(AskRequest) returns (AskResponse); rpc EnqueueLearningTask(LearningTask) returns (TaskAccepted); }
+message AskRequest { string request_id=1; string session_id=2; string user_id=3; string query=4; string language=5; repeated Message history=6; }
+message Message { string role=1; string content=2; }
+message AskResponse { string trace_id=1; string answer=2; string intent=3; bool validated=4; repeated Source sources=5; }
+message Source { string chunk_id=1; string source=2; string chapter=3; }
+message LearningTask { string task_id=1; string user_id=2; string session_id=3; string kind=4; string payload_json=5; }
+message TaskAccepted { string task_id=1; string status=2; }

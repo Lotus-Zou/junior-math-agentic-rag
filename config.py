@@ -84,6 +84,12 @@ ENABLE_TUTOR_AGENT = os.getenv("ENABLE_TUTOR_AGENT", "true").lower() in {
 FORCE_LLM_EVERY_TURN = os.getenv("FORCE_LLM_EVERY_TURN", "true").lower() in {
     "1", "true", "yes"
 }
+AI_MAX_INFLIGHT = int(os.getenv("AI_MAX_INFLIGHT", "64"))
+AI_QUEUE_MAXSIZE = int(os.getenv("AI_QUEUE_MAXSIZE", "10000"))
+GATEWAY_RATE_PER_SECOND = int(os.getenv("GATEWAY_RATE_PER_SECOND", "80"))
+GATEWAY_RATE_BURST = int(os.getenv("GATEWAY_RATE_BURST", "160"))
+LLM_CALL_TIMEOUT_SECONDS = float(os.getenv("LLM_CALL_TIMEOUT_SECONDS", "5"))
+LLM_MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "0"))
 MAX_HISTORY_MESSAGES = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))
 
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))

@@ -58,6 +58,7 @@ from config import (
     MATH_EMBEDDING_MODEL_PATH,
     TAVILY_API_KEY,
 )
+from agentic_rag.task_queue import enqueue, queue_status
 
 STATIC_DIR = Path(__file__).with_name("static")
 _graph = None
@@ -148,6 +149,11 @@ class FeedbackRequest(BaseModel):
 class CurriculumSkillRun:
     response: dict[str, Any]
     contract: dict[str, Any]
+class LearningTaskRequest(BaseModel):
+    kind: Literal["mistake_archive", "knowledge_assessment", "learning_report"]
+    payload: dict[str, Any] = Field(default_factory=dict)
+    user_id: str = Field(default="", max_length=128)
+    session_id: str = Field(default="", max_length=128)
 
 def get_graph():
     global _graph
@@ -910,6 +916,16 @@ def runtime():
             "web_search_configured": bool(TAVILY_API_KEY),
         },
     }
+@app.get("/queue")
+def queue():
+    """队列深度供网关/Kubernetes readiness 与运营监控使用。"""
+    return queue_status()
+
+
+@app.post("/tasks", status_code=202)
+def create_learning_task(request: LearningTaskRequest):
+    task_id = enqueue(request.kind, request.payload, user_id=request.user_id, session_id=request.session_id)
+    return {"task_id": task_id, "status": "queued", "kind": request.kind}
 
 @app.get("/", include_in_schema=False)
 def home():
