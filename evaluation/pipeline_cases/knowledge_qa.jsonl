@@ -1,0 +1,1 @@
+{"id":"function-knowledge","pipeline":"correction.yaml","input":{"query":"一次函数 y=-2x+3 怎么画","language":"zh"},"expected_node":"response_render","answer_contains":"斜率 k = -2"}

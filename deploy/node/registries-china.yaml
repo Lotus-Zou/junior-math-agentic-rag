@@ -1,0 +1,8 @@
+# Optional mirror transport; image identity remains pinned by SHA-256.
+mirrors:
+  docker.io:
+    endpoint: [https://docker.m.daocloud.io]
+  registry.k8s.io:
+    endpoint: [https://m.daocloud.io/registry.k8s.io]
+    rewrite:
+      "^(.+)$": "$1"

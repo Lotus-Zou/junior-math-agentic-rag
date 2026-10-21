@@ -1,0 +1,102 @@
+name: 在线作品展示
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - frontend/**
+      - tools/verify_showcase_browser.py
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装前端依赖
+        working-directory: frontend
+        run: npm ci
+      - name: 运行前端回归测试
+        working-directory: frontend
+        run: npm test
+      - name: 构建独立展示版本
+        working-directory: frontend
+        run: npm run build:showcase
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装浏览器验收工具
+        run: |
+          python -m pip install 'playwright>=1.58,<2'
+          python -m playwright install --with-deps chromium
+      - name: 验收桌面和手机交互
+        run: |
+          npm --prefix frontend run preview -- --mode showcase --port 28181 --strictPort &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:28181/junior-math-agentic-rag/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          python tools/verify_showcase_browser.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: showcase-browser-checks
+          path: .runtime/showcase-browser
+          include-hidden-files: true
+          retention-days: 14
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 发布在线展示
+        id: deployment
+        uses: actions/deploy-pages@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装公网验收工具
+        run: |
+          python -m pip install 'playwright>=1.58,<2'
+          python -m playwright install --with-deps chromium
+      - name: 验收公网体验链接
+        env:
+          SHOWCASE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: python tools/verify_showcase_browser.py --url "$SHOWCASE_URL" --output .runtime/showcase-online
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: showcase-online-checks
+          path: .runtime/showcase-online
+          include-hidden-files: true
+          retention-days: 14

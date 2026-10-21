@@ -1,0 +1,100 @@
+name: Engineering Verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      PYTHON_DOTENV_DISABLED: "1"
+      OPENAI_API_KEY: "offline-ci-placeholder"
+      QUEUE_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      ENABLE_DENSE_RETRIEVAL: "false"
+      HF_HUB_OFFLINE: "1"
+      CHROMA_PATH: .runtime/ci-chroma
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install CPU dependencies
+        run: |
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+      - name: Render Kubernetes configuration
+        run: |
+          kubectl kustomize deploy/k8s > /tmp/math-agent-k8s.yaml
+          kubectl kustomize deploy/overlays/single-gpu > /tmp/math-agent-single-gpu.yaml
+      - name: Build offline contract-test knowledge index
+        run: python tools/bootstrap_local_index.py
+      - name: Check programmatic labels and run tests
+        run: |
+          python -m evaluation.dataset_audit --output evaluation/reports/ci-dataset.json
+          python -m pytest --junitxml=evaluation/reports/ci-python.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-engineering-evidence
+          path: |
+            evaluation/reports/ci-python.xml
+            evaluation/reports/ci-dataset.json
+          retention-days: 14
+
+  gateway:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    env:
+      GATEWAY_TEST_REDIS_URL: redis://127.0.0.1:6379/14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - name: Race tests
+        working-directory: gateway
+        run: go test -race -count=1 ./...
+      - name: Build actual gateway image
+        run: docker build -t math-agent-gateway:ci gateway
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run build:showcase

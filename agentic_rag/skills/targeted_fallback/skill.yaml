@@ -1,0 +1,18 @@
+id: math.targeted_fallback
+version: 1.0.0
+description: "Turn a twice-rejected draft into a validated question-specific next step without exposing internal failures."
+input_schema: agentic_rag.domain.schemas.AnswerRepairInput
+output_schema: agentic_rag.domain.schemas.AnswerEnvelope
+handler: agentic_rag.skills.targeted_fallback.handler.handle
+timeout_ms: 500
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: [math.answer_repair@1]
+fallback: none
+policies: [junior_math_scope]
+evaluator: targeted_fallback_v1
+expose:
+  langchain: false
+  mcp: false

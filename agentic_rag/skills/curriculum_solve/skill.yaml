@@ -1,0 +1,17 @@
+id: math.curriculum_solve
+version: 1.0.0
+description: "Junior mathematics curriculum solve business capability with typed input and output."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.curriculum_solve.handler.handle
+timeout_ms: 2000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: []
+policies: [junior_math_scope]
+evaluator: curriculum_solve_v1
+expose:
+  langchain: true
+  mcp: true

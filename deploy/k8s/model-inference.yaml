@@ -1,0 +1,152 @@
+# Multi-node pool; use deploy/overlays/single-gpu for a one-card baseline.
+# Artifact provenance and remaining review gates are recorded in artifacts/.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: math-agent-model-config
+  namespace: math-agent
+data:
+  MODEL_ID: "Qwen/Qwen2.5-7B-Instruct"
+  MODEL_PATH: "/models/qwen2.5-7b-instruct"
+  SERVED_MODEL_NAME: "math-agent"
+  MAX_MODEL_LEN: "8192"
+  MAX_NUM_SEQS: "32"
+  MAX_NUM_BATCHED_TOKENS: "8192"
+  GPU_MEMORY_UTILIZATION: "0.85"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: math-agent-model
+  namespace: math-agent
+  labels: {app: math-agent-model}
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector: {matchLabels: {app: math-agent-model}}
+  template:
+    metadata: {labels: {app: math-agent-model}}
+    spec:
+      runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 90
+      nodeSelector: {accelerator: nvidia}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector: {matchLabels: {app: math-agent-model}}
+      initContainers:
+        - name: verified-model-download
+          image: docker.io/vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+          command: [python3, /artifacts/download.py]
+          args: [--manifest, /artifacts/manifest.json, --destination, /models/qwen2.5-7b-instruct]
+          env: [{name: NVIDIA_VISIBLE_DEVICES, value: void}]
+          resources:
+            requests: {cpu: 250m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+          volumeMounts:
+            - {name: artifacts, mountPath: /artifacts, readOnly: true}
+            - {name: model-cache, mountPath: /models}
+      containers:
+        - name: vllm
+          image: docker.io/vllm/vllm-openai@sha256:befccf0e7e4089aa23926bb6f887a85c0d46c2a99e6de5c5ffdf5cb7957c5b34
+          command: ["vllm", "serve"]
+          args:
+            - "$(MODEL_PATH)"
+            - "--served-model-name=$(SERVED_MODEL_NAME)"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+            - "--max-model-len=$(MAX_MODEL_LEN)"
+            - "--max-num-seqs=$(MAX_NUM_SEQS)"
+            - "--max-num-batched-tokens=$(MAX_NUM_BATCHED_TOKENS)"
+            - "--gpu-memory-utilization=$(GPU_MEMORY_UTILIZATION)"
+            - "--enable-prefix-caching"
+            - "--disable-log-requests"
+          envFrom: [{configMapRef: {name: math-agent-model-config}}]
+          env:
+            - name: VLLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: math-agent-secrets
+                  key: OPENAI_API_KEY
+            - {name: HF_HOME, value: /models/huggingface}
+            - {name: CUDA_DEVICE_ORDER, value: PCI_BUS_ID}
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: math-agent-secrets
+                  key: HF_TOKEN
+                  optional: true
+          ports: [{name: http, containerPort: 8000}]
+          volumeMounts:
+            - {name: shm, mountPath: /dev/shm}
+            - {name: model-cache, mountPath: /models}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+            failureThreshold: 180
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 90
+            periodSeconds: 15
+            failureThreshold: 4
+          resources:
+            requests: {cpu: "4", memory: 16Gi, nvidia.com/gpu: "1"}
+            limits: {cpu: "8", memory: 24Gi, nvidia.com/gpu: "1"}
+      volumes:
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 2Gi}
+        - name: model-cache
+          persistentVolumeClaim: {claimName: math-agent-model-cache}
+        - name: artifacts
+          configMap: {name: math-agent-model-artifacts}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: math-agent-model
+  namespace: math-agent
+  labels: {app: math-agent-model}
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  selector: {app: math-agent-model}
+  ports: [{name: http, port: 8000, targetPort: http}]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: math-agent-model
+  namespace: math-agent
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: math-agent-model}
+  minReplicas: 2
+  maxReplicas: 8
+  behavior:
+    scaleUp: {stabilizationWindowSeconds: 15}
+    scaleDown: {stabilizationWindowSeconds: 300}
+  metrics:
+    - type: Pods
+      pods:
+        metric: {name: vllm_num_requests_waiting}
+        target: {type: AverageValue, averageValue: "2"}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: math-agent-model, namespace: math-agent}
+spec: {minAvailable: 1, selector: {matchLabels: {app: math-agent-model}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: math-agent-model-cache, namespace: math-agent}
+spec:
+  accessModes: [ReadWriteMany]
+  resources: {requests: {storage: 50Gi}}

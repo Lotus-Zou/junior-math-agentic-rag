@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "rows": 1000,
+  "unique_normalized_stems": 1000,
+  "annotation_method": "deterministic_programmatic",
+  "human_reviewed_cases": 0,
+  "dataset_sha256": "7ca9030adbeb66a21ab8ca8b58f10c7a501450f209a400b824dac336498c6b45",
+  "generator_sha256": "523dbf58e016e97e1a2f88bc7658a2e2b7f8a51fd6f8a3d2b0f41823596b45f8",
+  "case_types": {
+    "colloquial": 333,
+    "hallucination_risk": 333,
+    "normal": 334
+  },
+  "knowledge_points": {
+    "一元一次不等式": 100,
+    "一元一次方程": 100,
+    "一元二次方程": 100,
+    "一次函数": 100,
+    "勾股定理": 100,
+    "因式分解": 100,
+    "圆周角": 100,
+    "平均数": 100,
+    "相似三角形": 100,
+    "等可能概率": 100
+  },
+  "source_files": [
+    {
+      "path": "data/sources/grade7-inequalities.md",
+      "sha256": "dc1308133fabaa435e3eaf353abc22c2e476d2865e666df8efacc9c9d54647e8"
+    },
+    {
+      "path": "data/sources/grade7-linear-equations.md",
+      "sha256": "abcaabcf76f9b9b029be9addc087a8d1194016867f2c5137c5edd8dfab231d69"
+    },
+    {
+      "path": "data/sources/grade8-factorization.md",
+      "sha256": "e6eb691663c365611a10214898089c6ddae0bfe1a98a4b2ba7032ff7f81cb6aa"
+    },
+    {
+      "path": "data/sources/grade8-linear-functions.md",
+      "sha256": "18793eb0a43ce6d51ab8bb395929a8d1d4e7a1004aba42f0a92f71fa2cc7cab8"
+    },
+    {
+      "path": "data/sources/grade8-pythagorean.md",
+      "sha256": "72f5f62c120bdc670ebdba7ce59af6402c9fdcf417de4935f300e1f512e87909"
+    },
+    {
+      "path": "data/sources/grade8-statistics.md",
+      "sha256": "9dbdf689fcf7b24ce837f57eb0c4e454b11aadd9681846740ae09867628dcaa7"
+    },
+    {
+      "path": "data/sources/grade9-circle-angles.md",
+      "sha256": "4f5a7b3950627b4eb1957fc52d3ccbc62b15f82608bbdfe421a971624bbd1e66"
+    },
+    {
+      "path": "data/sources/grade9-probability.md",
+      "sha256": "408fd7a75f798350278645c6008db000a3c0e98c306dc8425cc93f5a1af2b20c"
+    },
+    {
+      "path": "data/sources/grade9-quadratics.md",
+      "sha256": "7246df8fa0d85835a489a059881b37ec699c45487779d831cd519ad2306041fd"
+    },
+    {
+      "path": "data/sources/grade9-similarity.md",
+      "sha256": "700917e4d3fae2f0ab8f89fdf13c123b1f9451ee138b51f69a3ebd9f3da05780"
+    }
+  ],
+  "checks": {
+    "generator_consistency": true,
+    "normalized_deduplication": true,
+    "knowledge_sources_exist": true
+  },
+  "limitations": [
+    "Programmatic labels are not human annotations.",
+    "Source files support knowledge points; they are not the origins of mined competition questions.",
+    "Generator consistency does not prove external answer accuracy or student adoption."
+  ]
+}

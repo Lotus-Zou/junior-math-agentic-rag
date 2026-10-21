@@ -1,0 +1,17 @@
+id: math.no_evidence_response
+version: 1.0.0
+description: "Render a specific safe continuation when both local mathematics retrieval and Tavily return no evidence."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.no_evidence_response.handler.handle
+timeout_ms: 500
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: [web.tavily_search@1]
+policies: [junior_math_scope]
+evaluator: no_evidence_response_v1
+expose:
+  langchain: false
+  mcp: false

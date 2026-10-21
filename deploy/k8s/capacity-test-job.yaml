@@ -1,0 +1,41 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: math-agent-capacity-test
+  namespace: math-agent
+  labels: {app: math-agent-capacity-test}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata: {labels: {app: math-agent-capacity-test}}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load-test
+          image: math-agent-ai:local
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-c"]
+          args:
+            - >-
+              python tools/evening_capacity_test.py
+              --url http://math-agent-gateway.math-agent.svc.cluster.local/ask
+              --steady-seconds 900
+              --steady-concurrency 50
+              --burst-seconds 180
+              --burst-concurrency 300
+              --timeout 240
+              --min-steady-rps 10
+              --output /reports/k8s-capacity-${HOSTNAME}.json
+          env:
+            - name: AUTH_SHARED_SECRET
+              valueFrom: {secretKeyRef: {name: math-agent-secrets, key: AUTH_SHARED_SECRET}}
+          resources:
+            requests: {cpu: "1", memory: 1Gi}
+            limits: {cpu: "2", memory: 2Gi}
+          volumeMounts:
+            - {name: reports, mountPath: /reports}
+      volumes:
+        - name: reports
+          persistentVolumeClaim: {claimName: math-agent-traces}

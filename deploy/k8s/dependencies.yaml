@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Service
+metadata: {name: math-agent-redis, namespace: math-agent}
+spec: {selector: {app: math-agent-redis}, ports: [{port: 6379, targetPort: redis}]}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: math-agent-redis, namespace: math-agent}
+spec:
+  serviceName: math-agent-redis
+  replicas: 1
+  selector: {matchLabels: {app: math-agent-redis}}
+  template:
+    metadata: {labels: {app: math-agent-redis}}
+    spec:
+      containers:
+        - name: redis
+          image: docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499
+          args: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "allkeys-lru"]
+          ports: [{name: redis, containerPort: 6379}]
+          readinessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 5}
+          livenessProbe: {exec: {command: ["redis-cli", "ping"]}, periodSeconds: 10}
+          volumeMounts: [{name: data, mountPath: /data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 10Gi}}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: math-agent-mysql, namespace: math-agent}
+spec: {selector: {app: math-agent-mysql}, ports: [{port: 3306, targetPort: mysql}]}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: math-agent-mysql, namespace: math-agent}
+spec:
+  serviceName: math-agent-mysql
+  replicas: 1
+  selector: {matchLabels: {app: math-agent-mysql}}
+  template:
+    metadata: {labels: {app: math-agent-mysql}}
+    spec:
+      containers:
+        - name: mysql
+          image: docker.io/library/mysql@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70
+          ports: [{name: mysql, containerPort: 3306}]
+          envFrom: [{secretRef: {name: math-agent-secrets}}]
+          env:
+            - {name: MYSQL_DATABASE, value: math_agent}
+            - {name: MYSQL_USER, value: math_agent}
+          readinessProbe: {exec: {command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -u$MYSQL_USER -p$MYSQL_PASSWORD"]}, initialDelaySeconds: 20, periodSeconds: 10}
+          livenessProbe: {exec: {command: ["sh", "-c", "mysqladmin ping -h 127.0.0.1 -u$MYSQL_USER -p$MYSQL_PASSWORD"]}, initialDelaySeconds: 30, periodSeconds: 15}
+          volumeMounts: [{name: data, mountPath: /var/lib/mysql}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 30Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: math-agent-traces, namespace: math-agent}
+spec: {accessModes: [ReadWriteMany], resources: {requests: {storage: 10Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: math-agent-chroma, namespace: math-agent}
+spec: {accessModes: [ReadWriteMany], resources: {requests: {storage: 20Gi}}}

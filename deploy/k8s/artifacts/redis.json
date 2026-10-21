@@ -1,0 +1,20 @@
+{
+  "upstream": "docker.io/library/redis:7.4-alpine",
+  "fetched_from": "docker.m.daocloud.io/library/redis:7.4-alpine",
+  "pinned": "docker.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+  "mirror_pinned": "docker.m.daocloud.io/library/redis@sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499",
+  "manifest_digest": "sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
+  "config_digest": "sha256:f84b0c4678011602b9b98c227a4dcd5468bf8b088b02fdd4165cb7758bad8058",
+  "platform": "linux/amd64",
+  "created": "2026-09-17T21:32:46.989770417Z",
+  "compressed_layer_bytes": 16242313,
+  "entrypoint": [
+    "docker-entrypoint.sh"
+  ],
+  "cuda_environment": [],
+  "integrity": "manifest and config SHA-256 verified",
+  "source_status": "mirror; upstream signature verification pending",
+  "vulnerability_scan": "pending",
+  "runtime_gpu_validation": "pending",
+  "reviewed_at": "2026-10-19T13:01:53.005805+00:00"
+}

@@ -1,0 +1,9 @@
+id: math.multimodal
+version: 1.0.0
+sla_ms: 70000
+entry: attachment_extract
+nodes:
+  attachment_extract:
+    skill: math.attachment_extract@1
+    "on": {pass: attachment_structure, fail: END, retryable_fail: END}
+  attachment_structure: {skill: math.attachment_structure@1, next: END}

@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+.runtime
+traces
+chroma_db
+long_term_memory.sqlite
+.codex-*
+frontend/node_modules
+static

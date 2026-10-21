@@ -1,0 +1,1 @@
+{"id":"retrieval-invalid-top-k","skill":"math.retrieve_dense@1","input":{"query":"一次函数","top_k":0},"expected_status":"FATAL_ERROR"}

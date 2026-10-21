@@ -1,0 +1,7 @@
+cases:
+  - id: disabled_without_key
+    kind: normal
+    expected_status: OK
+  - id: invalid_extra_field
+    kind: adversarial
+    expected_status: FATAL_ERROR

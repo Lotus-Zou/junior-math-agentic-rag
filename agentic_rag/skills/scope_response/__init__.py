@@ -1,0 +1,1 @@
+"""Versioned scope response Skill."""

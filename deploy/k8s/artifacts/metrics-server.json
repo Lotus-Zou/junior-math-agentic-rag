@@ -1,0 +1,20 @@
+{
+  "upstream": "registry.k8s.io/metrics-server/metrics-server:v0.9.0",
+  "fetched_from": "m.daocloud.io/registry.k8s.io/metrics-server/metrics-server:v0.9.0",
+  "pinned": "registry.k8s.io/metrics-server/metrics-server@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0",
+  "mirror_pinned": "m.daocloud.io/registry.k8s.io/metrics-server/metrics-server@sha256:d9862115e7c7881280d3d75ca26bda8ffc0fc213315979575bf23ce9826205c0",
+  "manifest_digest": "sha256:25d291fde59974547bac6f07fa9d6cf6f5bedd1f19d60c893311c5e741e0a42f",
+  "config_digest": "sha256:d7b01abacd67fcd2cd2f61b87cb46c850c4f090e77d3d5ae0878b9894e0fcd0f",
+  "platform": "linux/amd64",
+  "created": "2026-07-13T10:44:09.241108741Z",
+  "compressed_layer_bytes": 23250495,
+  "entrypoint": [
+    "/metrics-server"
+  ],
+  "cuda_environment": [],
+  "integrity": "manifest and config SHA-256 verified",
+  "source_status": "mirror; upstream signature verification pending",
+  "vulnerability_scan": "pending",
+  "runtime_gpu_validation": "pending",
+  "reviewed_at": "2026-10-19T12:39:17.413669+00:00"
+}

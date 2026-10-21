@@ -1,0 +1,7 @@
+cases:
+  - id: valid_png
+    kind: contract
+    expected_status: OK
+  - id: signature_mismatch
+    kind: adversarial
+    expected_status: FATAL_ERROR

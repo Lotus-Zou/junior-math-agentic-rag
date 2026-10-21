@@ -1,0 +1,20 @@
+{
+  "upstream": "registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0",
+  "fetched_from": "m.daocloud.io/registry.k8s.io/prometheus-adapter/prometheus-adapter:v0.12.0",
+  "pinned": "registry.k8s.io/prometheus-adapter/prometheus-adapter@sha256:932eae60e2bcf9c4660d6442da066ef1a79b4ea7cc232c61c7303069216ca006",
+  "mirror_pinned": "m.daocloud.io/registry.k8s.io/prometheus-adapter/prometheus-adapter@sha256:932eae60e2bcf9c4660d6442da066ef1a79b4ea7cc232c61c7303069216ca006",
+  "manifest_digest": "sha256:1ba33d7a5b4cdfb960c8824d612a459ff5ef62a15330224d422d36755bc11a11",
+  "config_digest": "sha256:3bba96c2e4e64c7706dc80500475f8a6e8db3e3db7ce3d7fcbc4688d7cf8a6cc",
+  "platform": "linux/amd64",
+  "created": "2024-05-16T18:27:34.705772687Z",
+  "compressed_layer_bytes": 38349912,
+  "entrypoint": [
+    "/adapter"
+  ],
+  "cuda_environment": [],
+  "integrity": "manifest and config SHA-256 verified",
+  "source_status": "mirror; upstream signature verification pending",
+  "vulnerability_scan": "pending",
+  "runtime_gpu_validation": "pending",
+  "reviewed_at": "2026-10-19T12:39:15.320389+00:00"
+}

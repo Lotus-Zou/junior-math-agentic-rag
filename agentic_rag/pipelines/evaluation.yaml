@@ -1,0 +1,6 @@
+id: math.evaluation
+version: 1.0.0
+sla_ms: 8000
+entry: curriculum_solve
+nodes:
+  curriculum_solve: {skill: math.curriculum_solve@1, next: END}

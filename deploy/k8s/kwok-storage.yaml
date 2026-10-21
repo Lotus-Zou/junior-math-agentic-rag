@@ -1,0 +1,44 @@
+# Local KWOK validation only. Production clusters must use CSI-backed storage.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kwok-math-agent-traces
+spec:
+  capacity: {storage: 10Gi}
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: ""
+  hostPath: {path: /tmp/junior-math-kwok/traces, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kwok-math-agent-chroma
+spec:
+  capacity: {storage: 20Gi}
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: ""
+  hostPath: {path: /tmp/junior-math-kwok/chroma, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kwok-math-agent-mysql
+spec:
+  capacity: {storage: 30Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: ""
+  hostPath: {path: /tmp/junior-math-kwok/mysql, type: DirectoryOrCreate}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: kwok-math-agent-redis
+spec:
+  capacity: {storage: 10Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Delete
+  storageClassName: ""
+  hostPath: {path: /tmp/junior-math-kwok/redis, type: DirectoryOrCreate}

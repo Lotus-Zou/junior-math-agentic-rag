@@ -1,0 +1,1 @@
+{"id":"wrong-equation-answer","pipeline":"answer_check.yaml","input":{"query":"解方程 2x+3=11","student_answer":"x=7","contexts":[]},"expected_node":"answer_check"}

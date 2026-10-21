@@ -1,0 +1,18 @@
+id: assistant.utility_tool
+version: 1.0.0
+description: "Answer deterministic date and time requests with an explicit timezone."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.utility_tool.handler.handle
+timeout_ms: 250
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: [math.turn_router@1]
+fallback: none
+policies: [safe_utility_tool]
+evaluator: utility_time_v1
+expose:
+  langchain: true
+  mcp: true

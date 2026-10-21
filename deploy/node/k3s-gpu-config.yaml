@@ -1,0 +1,18 @@
+# Isolated single-node baseline, not a highly available production cluster.
+https-listen-port: 17443
+data-dir: /data/math-agent-k3s
+default-local-storage-path: /data/math-agent-k3s/storage
+write-kubeconfig: /etc/rancher/k3s/math-agent-gpu.kubeconfig
+write-kubeconfig-mode: "0600"
+write-kubeconfig-name: math-agent-gpu
+node-name: math-agent-gpu
+node-label:
+  - accelerator=nvidia
+disable:
+  - traefik
+  - servicelb
+  - metrics-server
+secrets-encryption: true
+kubelet-arg:
+  - image-gc-high-threshold=80
+  - image-gc-low-threshold=65

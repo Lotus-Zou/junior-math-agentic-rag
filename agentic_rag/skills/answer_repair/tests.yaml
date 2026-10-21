@@ -1,0 +1,7 @@
+cases:
+  - id: one_bounded_repair
+    kind: reliability
+    expected_status: OK
+  - id: evidence_unchanged
+    kind: grounding
+    expected_status: OK

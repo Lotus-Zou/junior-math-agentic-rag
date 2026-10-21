@@ -1,0 +1,22 @@
+apiVersion: batch/v1
+kind: Job
+metadata: {name: math-agent-index-v1, namespace: math-agent}
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: ingest
+          image: math-agent-ai:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "ingest.py"]
+          envFrom: [{secretRef: {name: math-agent-secrets}}]
+          env:
+            - {name: HF_HOME, value: /app/chroma_db/model-cache}
+          volumeMounts:
+            - {name: chroma, mountPath: /app/chroma_db}
+          resources: {requests: {cpu: "500m", memory: "1Gi"}, limits: {cpu: "2", memory: "4Gi"}}
+      volumes:
+        - {name: chroma, persistentVolumeClaim: {claimName: math-agent-chroma}}

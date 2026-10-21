@@ -1,0 +1,20 @@
+{
+  "upstream": "docker.io/library/mysql:8.4",
+  "fetched_from": "docker.m.daocloud.io/library/mysql:8.4",
+  "pinned": "docker.io/library/mysql@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70",
+  "mirror_pinned": "docker.m.daocloud.io/library/mysql@sha256:24989179f58856db763f418010c1169fecc944e3ec1ea7e921572d83eb070f70",
+  "manifest_digest": "sha256:1f8411cc085d2f2f92060fca926746cbf97f87b76c3008e9741ad62e604c4ffa",
+  "config_digest": "sha256:efb212ddf03576a6c0b02b8d364e6a46f21e628308a719db0b0450f8817c0517",
+  "platform": "linux/amd64",
+  "created": "2026-10-12T20:12:57.125197724Z",
+  "compressed_layer_bytes": 238271431,
+  "entrypoint": [
+    "docker-entrypoint.sh"
+  ],
+  "cuda_environment": [],
+  "integrity": "manifest and config SHA-256 verified",
+  "source_status": "mirror; upstream signature verification pending",
+  "vulnerability_scan": "pending",
+  "runtime_gpu_validation": "pending",
+  "reviewed_at": "2026-10-19T13:01:56.110903+00:00"
+}

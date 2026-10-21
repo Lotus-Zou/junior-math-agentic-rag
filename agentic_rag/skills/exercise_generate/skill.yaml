@@ -1,0 +1,18 @@
+id: math.exercise_generate
+version: 1.0.0
+description: "Author adaptive junior-math exercises from verified seeds and independently check them before storage."
+input_schema: agentic_rag.domain.schemas.CurriculumSolveInput
+output_schema: agentic_rag.domain.schemas.CurriculumSolveOutput
+handler: agentic_rag.skills.exercise_generate.handler.handle
+timeout_ms: 50000
+max_attempts: 1
+idempotent: false
+side_effects: [exercise_session_write]
+required_capabilities: [llm, critic]
+dependencies: [math.turn_router@1]
+fallback: deterministic_verified_template
+policies: [junior_math_scope]
+evaluator: exercise_generate_v1
+expose:
+  langchain: false
+  mcp: false

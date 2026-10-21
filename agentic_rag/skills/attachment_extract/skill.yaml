@@ -1,0 +1,17 @@
+id: math.attachment_extract
+version: 1.0.0
+description: "Validate uploaded math-problem files and extract deterministic PDF text without persistence."
+input_schema: agentic_rag.domain.schemas.AttachmentUploadInput
+output_schema: agentic_rag.domain.schemas.AttachmentExtractOutput
+handler: agentic_rag.skills.attachment_extract.handler.handle
+timeout_ms: 3000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [attachment_read]
+dependencies: []
+policies: [junior_math_scope]
+evaluator: attachment_extract_v1
+expose:
+  langchain: false
+  mcp: true

@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: math-agent-ai, namespace: math-agent}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: math-agent-ai}}
+  template:
+    metadata: {labels: {app: math-agent-ai}}
+    spec:
+      containers:
+        - name: app
+          image: math-agent-ai:local
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000}]
+          envFrom: [{secretRef: {name: math-agent-secrets}}]
+          env:
+            - {name: HF_HOME, value: /app/chroma_db/model-cache}
+            - {name: OPENAI_API_BASE, value: http://math-agent-model:8000/v1}
+            - {name: MODEL_PROVIDER, value: custom}
+            - {name: MODEL_WIRE_API, value: chat_completions}
+            - {name: LLM_MODEL_NAME, value: math-agent}
+            - {name: CRITIC_MODEL_NAME, value: math-agent}
+            - {name: RERANK_MODEL_NAME, value: math-agent}
+            - {name: AI_MAX_INFLIGHT, value: "8"}
+            - {name: AI_QUEUE_MAXSIZE, value: "32"}
+            - {name: TASK_QUEUE_CAPACITY, value: "10000"}
+          volumeMounts:
+            - {name: traces, mountPath: /app/traces}
+            - {name: chroma, mountPath: /app/chroma_db}
+          readinessProbe: {httpGet: {path: /ready, port: 8000}, initialDelaySeconds: 10, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /health, port: 8000}, initialDelaySeconds: 20, periodSeconds: 15}
+          resources: {requests: {cpu: "500m", memory: "1Gi"}, limits: {cpu: "2", memory: "4Gi"}}
+      volumes:
+        - {name: traces, persistentVolumeClaim: {claimName: math-agent-traces}}
+        - {name: chroma, persistentVolumeClaim: {claimName: math-agent-chroma}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: math-agent-ai, namespace: math-agent}
+spec: {selector: {app: math-agent-ai}, ports: [{port: 8000, targetPort: 8000}]}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: math-agent-ai, namespace: math-agent}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: math-agent-ai}
+  minReplicas: 2
+  maxReplicas: 12
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 65}}}]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: {name: math-agent-ai, namespace: math-agent}
+spec: {minAvailable: 1, selector: {matchLabels: {app: math-agent-ai}}}

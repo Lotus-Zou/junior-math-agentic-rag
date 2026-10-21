@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: math-agent-worker, namespace: math-agent}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: math-agent-worker}}
+  template:
+    metadata: {labels: {app: math-agent-worker}}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: worker
+          image: math-agent-ai:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "worker.py"]
+          envFrom: [{secretRef: {name: math-agent-secrets}}]
+          env:
+            - {name: HF_HOME, value: /app/chroma_db/model-cache}
+            - {name: TASK_QUEUE_CAPACITY, value: "10000"}
+          volumeMounts:
+            - {name: chroma, mountPath: /app/chroma_db}
+            - {name: traces, mountPath: /app/traces}
+          readinessProbe: {exec: {command: ["python", "-c", "from agentic_rag.task_queue import queue_ready; raise SystemExit(0 if queue_ready() else 1)"]}, initialDelaySeconds: 10, periodSeconds: 15}
+          livenessProbe: {exec: {command: ["python", "-c", "import pathlib,time; p=pathlib.Path('/tmp/math-agent-worker.heartbeat'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime < 180 else 1)"]}, initialDelaySeconds: 30, periodSeconds: 30}
+          resources: {requests: {cpu: "250m", memory: "512Mi"}, limits: {cpu: "1", memory: "2Gi"}}
+      volumes:
+        - {name: traces, persistentVolumeClaim: {claimName: math-agent-traces}}
+        - {name: chroma, persistentVolumeClaim: {claimName: math-agent-chroma}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: {name: math-agent-worker, namespace: math-agent}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: math-agent-worker}
+  minReplicas: 2
+  maxReplicas: 10
+  metrics: [{type: Resource, resource: {name: cpu, target: {type: Utilization, averageUtilization: 65}}}]

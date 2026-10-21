@@ -1,0 +1,2 @@
+{"id":"rewrite-colloquial","skill":"math.query_rewrite@1","input":{"query":"这题怎么做"},"expected_status":"OK","expected":{"missing_conditions":["完整题干"]}}
+{"id":"rewrite-function","skill":"math.query_rewrite@1","input":{"query":"一次函数 y=-2x+3 怎么画"},"expected_status":"OK","contains":{"rewritten_query":"y=-2x+3"}}

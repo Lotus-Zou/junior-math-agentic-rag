@@ -1,0 +1,17 @@
+id: math.question_parse
+version: 1.0.0
+description: "Junior mathematics question parse business capability with typed input and output."
+input_schema: agentic_rag.domain.schemas.QueryInput
+output_schema: agentic_rag.domain.schemas.QuestionParseOutput
+handler: agentic_rag.skills.question_parse.handler.handle
+timeout_ms: 600
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: []
+dependencies: []
+policies: [junior_math_scope]
+evaluator: question_parse_v1
+expose:
+  langchain: true
+  mcp: true

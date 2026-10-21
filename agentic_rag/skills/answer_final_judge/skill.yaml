@@ -1,0 +1,18 @@
+id: math.answer_final_judge
+version: 1.0.0
+description: "Independently solve and adjudicate a complete self-contained problem after two Critic rejections."
+input_schema: agentic_rag.domain.schemas.AnswerRepairInput
+output_schema: agentic_rag.domain.schemas.AnswerEnvelope
+handler: agentic_rag.skills.answer_final_judge.handler.handle
+timeout_ms: 60000
+max_attempts: 1
+idempotent: true
+side_effects: []
+required_capabilities: [llm]
+dependencies: [math.answer_critic@1]
+fallback: math.targeted_fallback@1
+policies: [junior_math_scope, complete_self_contained_problem]
+evaluator: answer_final_judge_v1
+expose:
+  langchain: false
+  mcp: false

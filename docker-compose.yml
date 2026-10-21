@@ -1,0 +1,126 @@
+services:
+  gateway:
+    build: ./gateway
+    environment:
+      AI_UPSTREAM: http://app:8000
+      AI_PROTOCOL: grpc
+      AI_GRPC_TARGET: grpc:50051
+      GATEWAY_REDIS_URL: redis://redis:6379/1
+      GATEWAY_RATE_PER_SECOND: 80
+      GATEWAY_RATE_BURST: 160
+      GATEWAY_PORT: 8080
+      AUTH_SHARED_SECRET: ${AUTH_SHARED_SECRET:?set AUTH_SHARED_SECRET in .env}
+      REQUIRE_USER_IDENTITY: "true"
+      AUTH_BROWSER_SESSIONS: "true"
+    ports:
+      - "8080:8080"
+    depends_on:
+      app:
+        condition: service_started
+      grpc:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MYSQL_URL: mysql://math_agent:math_agent_dev@mysql:3306/math_agent
+      REQUIRE_USER_IDENTITY: "true"
+      AUTH_SHARED_SECRET: ${AUTH_SHARED_SECRET:?set AUTH_SHARED_SECRET in .env}
+      AI_MAX_INFLIGHT: 16
+      AI_QUEUE_MAXSIZE: 128
+      TASK_QUEUE_CAPACITY: ${TASK_QUEUE_CAPACITY:-10000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+      - ./traces:/app/traces
+      - huggingface-cache:/models/huggingface
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["python", "worker.py"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MYSQL_URL: mysql://math_agent:math_agent_dev@mysql:3306/math_agent
+      TASK_QUEUE_CAPACITY: ${TASK_QUEUE_CAPACITY:-10000}
+    volumes:
+      - ./data:/app/data
+      - ./traces:/app/traces
+      - ./chroma_db:/app/chroma_db
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grpc:
+    build: .
+    command: ["python", "grpc_server.py"]
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MYSQL_URL: mysql://math_agent:math_agent_dev@mysql:3306/math_agent
+      REQUIRE_USER_IDENTITY: "true"
+      AUTH_SHARED_SECRET: ${AUTH_SHARED_SECRET:?set AUTH_SHARED_SECRET in .env}
+      GRPC_PORT: 50051
+      TASK_QUEUE_CAPACITY: ${TASK_QUEUE_CAPACITY:-10000}
+    volumes:
+      - ./data:/app/data
+      - ./chroma_db:/app/chroma_db
+      - ./traces:/app/traces
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: math_agent
+      MYSQL_USER: math_agent
+      MYSQL_PASSWORD: math_agent_dev
+      MYSQL_ROOT_PASSWORD: root_dev_only
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+      - ./sql/002_domain_model.sql:/docker-entrypoint-initdb.d/002_domain_model.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_dev_only"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save 60 1
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+  mysql-data:
+  huggingface-cache:

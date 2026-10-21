@@ -1,0 +1,7 @@
+cases:
+  - id: no_internal_rejection_copy
+    kind: product
+    expected_status: OK
+  - id: active_state_preserved
+    kind: conversation
+    expected_status: OK

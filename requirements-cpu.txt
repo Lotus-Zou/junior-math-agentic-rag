@@ -1,0 +1,4 @@
+# Install the CPU wheel first, then install requirements.txt with the normal index.
+# This avoids pulling CUDA/NVIDIA runtime packages on CPU-only deployments.
+--index-url https://download.pytorch.org/whl/cpu
+torch>=2.6

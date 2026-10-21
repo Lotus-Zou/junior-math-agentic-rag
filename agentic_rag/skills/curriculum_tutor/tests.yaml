@@ -1,0 +1,7 @@
+cases:
+  - id: deterministic_math_is_immutable
+    kind: safety
+    expected_status: OK
+  - id: author_and_critic_are_separate
+    kind: agent
+    expected_status: OK
